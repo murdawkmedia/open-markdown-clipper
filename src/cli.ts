@@ -2,7 +2,6 @@
 // banner in scripts/build-cli.mjs. They must run before any bundled module code.
 import { parseHTML } from 'linkedom';
 import { clip, matchTemplate, DocumentParser } from './api';
-import { openInObsidian } from './utils/cli-utils';
 import { Template } from './types/types';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -15,27 +14,19 @@ interface CliArgs {
 	url: string;
 	templatePath: string;
 	outputPath?: string;
-	vault?: string;
-	open: boolean;
-	silent: boolean;
-	uri: boolean;
 	propertyTypesPath?: string;
 	htmlPath?: string;
 }
 
 function printUsage(): void {
 	const usage = `
-Usage: obsidian-clipper <url> [options]
+Usage: open-markdown-clipper <url> [options]
 
 Options:
   -t, --template <path>        Path to template JSON file or directory (required)
                                If a directory, auto-matches template by URL triggers
   -o, --output <path>          Output .md file path (default: stdout)
       --html <path>            Read HTML from file instead of fetching URL (use - for stdin)
-      --vault <name>           Obsidian vault name
-      --open                   Send to Obsidian instead of writing file
-      --uri                    Use URI scheme instead of Obsidian CLI
-      --silent                 Suppress Obsidian focus (URI mode)
       --property-types <path>  JSON mapping property names to types
   -h, --help                   Show this help message
 `.trim();
@@ -47,10 +38,6 @@ function parseArgs(argv: string[]): CliArgs {
 	let url = '';
 	let templatePath = '';
 	let outputPath: string | undefined;
-	let vault: string | undefined;
-	let open = false;
-	let silent = false;
-	let uri = false;
 	let propertyTypesPath: string | undefined;
 	let htmlPath: string | undefined;
 
@@ -71,19 +58,6 @@ function parseArgs(argv: string[]): CliArgs {
 			case '--output':
 				if (i + 1 >= args.length) { console.error('Error: --output requires a value'); process.exit(1); }
 				outputPath = args[++i];
-				break;
-			case '--vault':
-				if (i + 1 >= args.length) { console.error('Error: --vault requires a value'); process.exit(1); }
-				vault = args[++i];
-				break;
-			case '--open':
-				open = true;
-				break;
-			case '--silent':
-				silent = true;
-				break;
-			case '--uri':
-				uri = true;
 				break;
 			case '--html':
 				if (i + 1 >= args.length) { console.error('Error: --html requires a value'); process.exit(1); }
@@ -116,7 +90,7 @@ function parseArgs(argv: string[]): CliArgs {
 		process.exit(1);
 	}
 
-	return { url, templatePath, outputPath, vault, open, silent, uri, propertyTypesPath, htmlPath };
+	return { url, templatePath, outputPath, propertyTypesPath, htmlPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -238,19 +212,7 @@ async function main(): Promise<void> {
 	});
 
 	// Output
-	if (args.open) {
-		const vault = args.vault || template.vault || '';
-		const obsResult = await openInObsidian(
-			result.fullContent,
-			result.noteName,
-			template.path || '',
-			vault,
-			template.behavior || 'create',
-			args.silent,
-			args.uri
-		);
-		console.error(obsResult);
-	} else if (args.outputPath) {
+	if (args.outputPath) {
 		fs.writeFileSync(path.resolve(args.outputPath), result.fullContent, 'utf-8');
 		console.error(`Written to ${args.outputPath}`);
 	} else {

@@ -1,10 +1,6 @@
 import { Template, Property } from '../types/types';
-import { templates, getTemplates, saveTemplateSettings, getEditingTemplateIndex } from '../managers/template-manager';
+import { getTemplates, saveTemplateSettings, getEditingTemplateIndex } from '../managers/template-manager';
 import { updateTemplateList } from '../managers/template-ui';
-import { updateVaultList } from '../managers/general-settings';
-import { generalSettings, saveSettings } from './storage-utils';
-import { initializeModelList } from '../managers/interpreter-settings';
-import { initializeIcons } from '../icons/icons';
 
 let draggedElement: HTMLElement | null = null;
 
@@ -12,8 +8,6 @@ export function initializeDragAndDrop(): void {
 	const draggableLists = [
 		document.getElementById('template-list'),
 		document.getElementById('template-properties'),
-		document.getElementById('vault-list'),
-		document.getElementById('model-list')
 	];
 
 	draggableLists.forEach(list => {
@@ -59,7 +53,7 @@ export function handleDrop(e: DragEvent): void {
 	e.preventDefault();
 	if (!e.dataTransfer) return;
 	const draggedItemId = e.dataTransfer.getData('text/plain');
-	const list = (e.target as HTMLElement).closest('ul, #template-properties, #model-list');
+	const list = (e.target as HTMLElement).closest('ul, #template-properties');
 	
 	if (list && draggedElement) {
 		const items = Array.from(list.children);
@@ -69,10 +63,6 @@ export function handleDrop(e: DragEvent): void {
 			handleTemplateReorder(draggedItemId, newIndex);
 		} else if (list.id === 'template-properties') {
 			handlePropertyReorder(draggedItemId, newIndex);
-		} else if (list.id === 'vault-list') {
-			handleVaultReorder(newIndex);
-		} else if (list.id === 'model-list') {
-			handleModelReorder(newIndex);
 		}
 		
 		draggedElement.classList.remove('dragging');
@@ -147,32 +137,6 @@ function handlePropertyReorder(draggedItemId: string, newIndex: number): void {
 		}).catch(error => {
 			console.error('Failed to save template settings:', error);
 		});
-	}
-}
-
-function handleVaultReorder(newIndex: number): void {
-	if (!draggedElement) return;
-	const oldIndex = parseInt(draggedElement.dataset.index || '-1');
-	if (oldIndex !== -1 && oldIndex !== newIndex) {
-		const [movedVault] = generalSettings.vaults.splice(oldIndex, 1);
-		generalSettings.vaults.splice(newIndex, 0, movedVault);
-		saveSettings();
-		updateVaultList();
-	}
-}
-
-function handleModelReorder(newIndex: number): void {
-	if (!draggedElement) return;
-	const oldIndex = parseInt(draggedElement.dataset.index || '-1');
-	if (oldIndex !== -1 && oldIndex !== newIndex) {
-		const [movedModel] = generalSettings.models.splice(oldIndex, 1);
-		generalSettings.models.splice(newIndex, 0, movedModel);
-		saveSettings();
-		initializeModelList();
-		const modelList = document.getElementById('model-list');
-		if (modelList) {
-			initializeIcons(modelList);
-		}
 	}
 }
 

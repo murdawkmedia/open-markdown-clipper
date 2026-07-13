@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
-import { Template, Property, PromptVariable } from '../types/types';
-import { incrementStat, addHistoryEntry, getClipHistory } from '../utils/storage-utils';
-import { generateFrontmatter, saveToObsidian } from '../utils/obsidian-note-creator';
+import { Template, Property } from '../types/types';
+import { incrementStat } from '../utils/storage-utils';
+import { generateFrontmatter } from '../utils/frontmatter';
 import { extractPageContent, initializePageContent } from '../utils/content-extractor';
 import { compileTemplate } from '../utils/template-compiler';
 import { initializeIcons, getPropertyTypeIcon } from '../icons/icons';
@@ -12,7 +12,6 @@ import { loadTemplates, createDefaultTemplate } from '../managers/template-manag
 import browser from '../utils/browser-polyfill';
 import { addBrowserClassToHtml, detectBrowser } from '../utils/browser-detection';
 import { createElementWithClass } from '../utils/dom-utils';
-import { initializeInterpreter, handleInterpreterUI, collectPromptVariables } from '../utils/interpreter';
 import { adjustNoteNameHeight } from '../utils/ui-utils';
 import { debugLog } from '../utils/debug';
 import { showVariables, initializeVariablesPanel, updateVariablesPanel } from '../managers/inspect-variables';
@@ -21,8 +20,25 @@ import { memoizeWithExpiration } from '../utils/memoize';
 import { debounce } from '../utils/debounce';
 import { sanitizeFileName } from '../utils/string-utils';
 import { saveFile } from '../utils/file-utils';
+import { copyToClipboard } from '../utils/clipboard-utils';
+import { getLocalHttpToken } from '../utils/destination-secrets';
+import {
+	createDataConsentController,
+	DataConsentPermissionsApi,
+} from '../utils/data-consent';
 import { translatePage, getMessage, setupLanguageAndDirection } from '../utils/i18n';
 import { formatPropertyValue } from '../utils/shared';
+import {
+	captureStablePopupSnapshot,
+	createPopupDestinationDelivery,
+	createRefreshReadinessGate,
+	PopupDestinationDelivery,
+	PopupRefreshToken,
+} from './popup-delivery';
+import {
+	createQuickClipPopupDispatcher,
+	parseQuickClipPopupContext,
+} from './quick-clip-popup';
 
 interface ReaderModeResponse {
 	success: boolean;
@@ -34,11 +50,28 @@ let currentTemplate: Template | null = null;
 let templates: Template[] = [];
 let currentVariables: { [key: string]: string } = {};
 let currentTabId: number | undefined;
-let lastSelectedVault: string | null = null;
+let popupDestinationDelivery: PopupDestinationDelivery | null = null;
+const popupRefreshGate = createRefreshReadinessGate(
+	ready => popupDestinationDelivery?.setReady(ready),
+);
+let popupRefreshQueue: Promise<void> = Promise.resolve();
+const popupDataConsentController = createDataConsentController(
+	browser.permissions as unknown as DataConsentPermissionsApi,
+);
+const popupDataConsentPrime = popupDataConsentController.prime();
 
 const isSidePanel = window.location.pathname.includes('side-panel.html');
 const urlParams = new URLSearchParams(window.location.search);
 const isIframe = urlParams.get('context') === 'iframe';
+const parsedQuickClipPopupContext = parseQuickClipPopupContext(window.location.search);
+const quickClipPopupContext = !isSidePanel && !isIframe
+	? parsedQuickClipPopupContext
+	: undefined;
+const isDedicatedQuickClipPopup = quickClipPopupContext !== undefined;
+const quickClipMessageDispatcher = createQuickClipPopupDispatcher({
+	context: quickClipPopupContext,
+	getController: () => popupDestinationDelivery,
+});
 
 // Memoize compileTemplate with a short expiration and URL-sensitive key
 const memoizedCompileTemplate = memoizeWithExpiration(
@@ -91,7 +124,7 @@ async function getTabInfo(tabId: number): Promise<{ id: number; url: string }> {
 
 // Helper function to get current tab URL and title for stats
 async function getCurrentTabInfo(): Promise<{ url: string; title?: string }> {
-	if (!currentTabId) {
+	if (currentTabId === undefined) {
 		return { url: '' };
 	}
 	
@@ -191,13 +224,6 @@ async function initializeExtension(tabId: number) {
 		currentTemplate = templates[0];
 		debugLog('Templates', 'Current template set to:', currentTemplate);
 
-		// Load last selected vault
-		lastSelectedVault = await getLocalStorage('lastSelectedVault');
-		if (!lastSelectedVault && loadedSettings.vaults.length > 0) {
-			lastSelectedVault = loadedSettings.vaults[0];
-		}
-		debugLog('Vaults', 'Last selected vault:', lastSelectedVault);
-
 		const tab = await getTabInfo(tabId);
 		if (!tab.url || isBlankPage(tab.url)) {
 			showError('pageCannotBeClipped');
@@ -235,24 +261,47 @@ const debouncedHighlightRefresh = debounce(() => {
 }, 300);
 
 function setupStorageListeners() {
-	browser.storage.local.onChanged.addListener((changes) => {
-		if (changes.highlights) {
+	browser.storage.onChanged.addListener((changes, areaName) => {
+		if (areaName === 'local' && changes.highlights) {
 			debouncedHighlightRefresh();
 		}
+		if (areaName !== 'sync' || !changes.general_settings || !popupDestinationDelivery) {
+			return;
+		}
+
+		const value = changes.general_settings.newValue;
+		if (!value || typeof value !== 'object') return;
+		const settings = value as Record<string, unknown>;
+		const destination = settings.defaultDestination;
+		const defaultDestination = (
+			destination === 'clipboard'
+			|| destination === 'download'
+			|| destination === 'custom-uri'
+			|| destination === 'local-http'
+		) ? destination : loadedSettings.defaultDestination;
+		const customUriTemplate = typeof settings.customUriTemplate === 'string'
+			? settings.customUriTemplate.slice(0, 2048)
+			: loadedSettings.customUriTemplate;
+		const localHttpEndpoint = typeof settings.localHttpEndpoint === 'string'
+			? settings.localHttpEndpoint.slice(0, 2048)
+			: loadedSettings.localHttpEndpoint;
+
+		loadedSettings.defaultDestination = defaultDestination;
+		loadedSettings.customUriTemplate = customUriTemplate;
+		loadedSettings.localHttpEndpoint = localHttpEndpoint;
+		popupDestinationDelivery.updateConfiguration({
+			defaultDestination,
+			preferences: { customUriTemplate, localHttpEndpoint },
+		});
 	});
 }
 
 function setupMessageListeners() {
 	browser.runtime.onMessage.addListener((request: any, sender: browser.Runtime.MessageSender, sendResponse: (response?: any) => void) => {
-		if (request.action === "triggerQuickClip") {
-			handleClipObsidian().then(() => {
-				sendResponse({success: true});
-			}).catch((error) => {
-				console.error('Error in handleClipObsidian:', error);
-				sendResponse({success: false, error: error.message});
-			});
-			return true;
-		} else if (request.action === "tabUrlChanged") {
+		const quickClipResult = quickClipMessageDispatcher(request, sendResponse);
+		if (quickClipResult === true) return true;
+
+		if (request.action === "tabUrlChanged") {
 			if (request.tabId === currentTabId) {
 				if (currentTabId !== undefined) {
 					refreshFields(currentTabId);
@@ -260,8 +309,9 @@ function setupMessageListeners() {
 			}
 		} else if (request.action === "activeTabChanged") {
 			// Only handle active tab changes if we're in side panel mode, not iframe mode
-			if (!isIframe) {
+			if (!isIframe && !isDedicatedQuickClipPopup) {
 				currentTabId = request.tabId;
+				popupRefreshGate.begin(request.tabId);
 				if (request.isRestrictedUrl) {
 					showError('pageCannotBeClipped');
 				} else if (request.isValidUrl) {
@@ -285,15 +335,17 @@ function setupMessageListeners() {
 document.addEventListener('DOMContentLoaded', async function() {
 	loadedSettings = await loadSettings();
 	if (isIframe) {
-		document.documentElement.classList.add('is-embedded');
+		document.documentElement.classList.add('is-reader-panel');
 	}
 
 	const isSidePanel = document.documentElement.classList.contains('is-side-panel');
 
 	try {
-		// Get the active tab via background script to handle Firefox compatibility
-		const response = await browser.runtime.sendMessage({ action: "getActiveTab" }) as { tabId?: number; error?: string };
-		if (!response || response.error || !response.tabId) {
+		// Dedicated Quick Clip launches remain bound to the command's source tab.
+		const response = quickClipPopupContext
+			? { tabId: quickClipPopupContext.tabId }
+			: await browser.runtime.sendMessage({ action: "getActiveTab" }) as { tabId?: number; error?: string };
+		if (!response || ('error' in response && response.error) || response.tabId === undefined) {
 			showError(getMessage('pleaseReload'));
 			return;
 		}
@@ -305,25 +357,8 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 		const openBehavior: Settings['openBehavior'] = isMobile && loadedSettings.openBehavior !== 'reader' ? 'popup' : loadedSettings.openBehavior;
 
-		// Check if we should open in an iframe, but only if the URL is valid
-		if (isValidUrl(tab.url) && !isBlankPage(tab.url) && openBehavior === 'embedded' && !isIframe && !isSidePanel) {
-			try {
-				const response = await browser.runtime.sendMessage({ action: "getActiveTabAndToggleIframe" }) as { success?: boolean; error?: string };
-				if (response && response.success) {
-					window.close();
-					return; // Exit script after closing the window
-				} else if (response && response.error) {
-					console.error('Error toggling iframe:', response.error);
-					// If there's an error, we'll fall through and open the normal popup.
-				}
-			} catch (error) {
-				console.error('Error toggling iframe:', error);
-				// If there's an error, we'll fall through and open the normal popup.
-			}
-		}
-
 		// Check if we should open in reader mode
-		if (isValidUrl(tab.url) && !isBlankPage(tab.url) && openBehavior === 'reader' && !isIframe && !isSidePanel) {
+		if (isValidUrl(tab.url) && !isBlankPage(tab.url) && openBehavior === 'reader' && !isIframe && !isSidePanel && !isDedicatedQuickClipPopup) {
 			try {
 				const response = await browser.runtime.sendMessage({
 					action: "toggleReaderMode",
@@ -369,7 +404,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 		}
 
 		// Initialize the rest of the popup
-		if (currentTabId) {
+		if (currentTabId !== undefined) {
 			const initialized = await initializeExtension(currentTabId);
 			if (!initialized) {
 				return;
@@ -377,12 +412,32 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 			try {
 				// DOM-dependent initializations
-				updateVaultDropdown(loadedSettings.vaults);
 				populateTemplateDropdown();
 				setupEventListeners(currentTabId);
+				await popupDataConsentPrime;
+				popupDestinationDelivery = createPopupDestinationDelivery({
+					document,
+					defaultDestination: loadedSettings.defaultDestination,
+					preferences: {
+						customUriTemplate: loadedSettings.customUriTemplate,
+						localHttpEndpoint: loadedSettings.localHttpEndpoint,
+					},
+					getSnapshot: capturePopupSnapshot,
+					getToken: getLocalHttpToken,
+					dataConsent: popupDataConsentController,
+					copy: copyToClipboard,
+					save: options => saveFile({ ...options, tabId: currentTabId }),
+					sendRuntimeMessage: message => browser.runtime.sendMessage(message),
+					fetchImpl: globalThis.fetch.bind(globalThis),
+					recordSuccess: (destination, sourceUrl, title) =>
+						incrementStat(destination, sourceUrl, title),
+					now: () => new Date(),
+					getMessage,
+					initializeIcons,
+					closePopup: () => window.close(),
+					canClosePopup: !isSidePanel && !isIframe,
+				});
 				await initializeUI();
-
-				determineMainAction();
 
 				const showMoreActionsButton = document.getElementById('show-variables');
 				if (showMoreActionsButton) {
@@ -430,23 +485,20 @@ function setupEventListeners(tabId: number) {
 		highlighterModeButton.addEventListener('click', () => toggleHighlighterMode(tabId));
 	}
 
-	const embeddedModeButton = document.getElementById('embedded-mode');
-		if (embeddedModeButton) {
-			embeddedModeButton.addEventListener('click', async function() {
+	const readerPanelCloseButton = document.getElementById('reader-panel-close');
+		if (readerPanelCloseButton) {
+			readerPanelCloseButton.addEventListener('click', async function() {
 				try {
-					await browser.runtime.sendMessage({ action: "getActiveTabAndToggleIframe" });
+					await browser.runtime.sendMessage({ action: 'toggleReaderSidePanel' });
 					setTimeout(() => window.close(), 50);
-				} catch (error) {
-					console.error('Error toggling emedded iframe:', error);
+				} catch {
+					// The background rejects non-reader and non-extension senders.
 				}
 			});
 		}
 
 	const moreButton = document.getElementById('more-btn');
 	const moreDropdown = document.getElementById('more-dropdown');
-	const copyContentButton = document.getElementById('copy-content');
-	const saveDownloadsButton = document.getElementById('save-downloads');
-	const shareContentButton = document.getElementById('share-content');
 
 	if (moreButton && moreDropdown) {
 		moreButton.addEventListener('click', (e) => {
@@ -460,22 +512,6 @@ function setupEventListeners(tabId: number) {
 				moreDropdown.classList.remove('show');
 			}
 		});
-	}
-
-	if (copyContentButton) {
-		copyContentButton.addEventListener('click', async () => {
-			const properties = getPropertiesFromDOM();
-
-			const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement;
-			const frontmatter = await generateFrontmatter(properties);
-			const fileContent = frontmatter + noteContentField.value;
-			
-			await copyToClipboard(fileContent);
-		});
-	}
-
-	if (saveDownloadsButton) {
-		saveDownloadsButton.addEventListener('click', handleSaveToDownloads);
 	}
 
 	const shareButtons = document.querySelectorAll('.share-content');
@@ -508,19 +544,14 @@ function setupEventListeners(tabId: number) {
 						
 						const shareData = {
 							files: [file],
-							text: 'Shared from Obsidian Web Clipper'
+							text: 'Shared from Open Markdown Clipper'
 						};
 
 						if (navigator.canShare(shareData)) {
-							const pathField = document.getElementById('path-name-field') as HTMLInputElement;
-							const vaultDropdown = document.getElementById('vault-select') as HTMLSelectElement;
-							const path = pathField?.value || '';
-							const vault = vaultDropdown?.value || '';
-
 							navigator.share(shareData)
 								.then(async () => {
 									const tabInfo = await getCurrentTabInfo();
-									await incrementStat('share', vault, path, tabInfo.url, tabInfo.title);
+									await incrementStat('share', tabInfo.url, tabInfo.title);
 									const moreDropdown = document.getElementById('more-dropdown');
 									if (moreDropdown) {
 											moreDropdown.classList.remove('show');
@@ -634,34 +665,69 @@ function logError(message: string, error?: any): void {
 	showError(message);
 }
 
-async function waitForInterpreter(interpretBtn: HTMLButtonElement): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const checkProcessing = () => {
-			if (!interpretBtn.classList.contains('processing')) {
-				if (interpretBtn.classList.contains('done')) {
-					resolve();
-				} else if (interpretBtn.classList.contains('error')) {
-					reject(new Error(getMessage('failedToProcessInterpreter')));
-				} else {
-					setTimeout(checkProcessing, 100);
-				}
-			} else {
-				setTimeout(checkProcessing, 100);
+async function capturePopupSnapshot(signal?: AbortSignal): Promise<{
+	title: string;
+	markdown: string;
+	sourceUrl: string;
+}> {
+	return captureStablePopupSnapshot<Template, Property[]>({
+		getState: () => ({
+			tabId: currentTabId,
+			template: currentTemplate,
+			revision: popupRefreshGate.currentRevision(),
+			ready: popupRefreshGate.isReady()
+				&& popupDestinationDelivery?.isReady() === true,
+			readyUrl: popupRefreshGate.readyUrl(),
+		}),
+		readDom: () => {
+			const noteNameField = document.getElementById('note-name-field') as HTMLTextAreaElement | null;
+			const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement | null;
+			if (!noteNameField || !noteContentField) {
+				throw new Error('destination-delivery-failed');
 			}
-		};
-		checkProcessing();
-	});
+			return {
+				title: noteNameField.value,
+				noteContent: noteContentField.value,
+				properties: getPropertiesFromDOM(),
+			};
+		},
+		buildMarkdown: async (properties, noteContent, signal) => {
+			if (signal?.aborted) throw new Error('destination-delivery-failed');
+			const markdown = (await generateFrontmatter(properties)) + noteContent;
+			if (signal?.aborted) throw new Error('destination-delivery-failed');
+			return markdown;
+		},
+		getSourceUrl: async (tabId, signal) => {
+			if (signal?.aborted) throw new Error('destination-delivery-failed');
+			const sourceUrl = (await getTabInfo(tabId)).url;
+			if (signal?.aborted) throw new Error('destination-delivery-failed');
+			return sourceUrl;
+		},
+	}, signal);
 }
 
 async function refreshFields(tabId: number, { checkTemplateTriggers = true, rebuildSkeleton = true }: { checkTemplateTriggers?: boolean; rebuildSkeleton?: boolean } = {}) {
-	if (templates.length === 0) {
-		console.warn('No templates available');
-		showError('noTemplates');
-		return;
-	}
+	const refreshToken: PopupRefreshToken = popupRefreshGate.begin(tabId);
+	const previousRefresh = popupRefreshQueue;
+	let releaseRefresh!: () => void;
+	popupRefreshQueue = new Promise<void>(resolve => {
+		releaseRefresh = resolve;
+	});
+	await previousRefresh;
+	let succeeded = false;
+	let successfulRefreshUrl: string | null = null;
+	const isCurrent = () => popupRefreshGate.isCurrent(refreshToken, currentTabId);
 
 	try {
+		if (!isCurrent()) return;
+		if (templates.length === 0) {
+			console.warn('No templates available');
+			showError('noTemplates');
+			return;
+		}
+
 		const tab = await getTabInfo(tabId);
+		if (!isCurrent()) return;
 		if (!tab.url || isBlankPage(tab.url)) {
 			showError('pageCannotBeClipped');
 			return;
@@ -686,8 +752,8 @@ async function refreshFields(tabId: number, { checkTemplateTriggers = true, rebu
 			};
 
 			const matchedTemplate = await findMatchingTemplate(tab.url, getSchemaOrgData);
+			if (!isCurrent()) return;
 			if (matchedTemplate) {
-				console.log('Matched template:', matchedTemplate);
 				currentTemplate = matchedTemplate;
 				updateTemplateDropdown();
 			}
@@ -699,6 +765,7 @@ async function refreshFields(tabId: number, { checkTemplateTriggers = true, rebu
 		}
 
 		const extractedData = await extractionPromise;
+		if (!isCurrent()) return;
 		if (extractedData) {
 			const currentUrl = tab.url;
 
@@ -721,18 +788,22 @@ async function refreshFields(tabId: number, { checkTemplateTriggers = true, rebu
 				extractedData.language || '',
 				extractedData.metaTags
 			);
+			if (!isCurrent()) return;
 			if (initializedContent) {
 				currentVariables = initializedContent.currentVariables;
-				console.log('Updated currentVariables:', currentVariables);
-				await fillTemplateFieldValues(
+				const fieldsFilled = await fillTemplateFieldValues(
 					tabId,
 					currentTemplate,
 					initializedContent.currentVariables,
-					extractedData.schemaOrgData
+					extractedData.schemaOrgData,
+					isCurrent,
 				);
+				if (!fieldsFilled || !isCurrent()) return;
 
 				// Update variables panel if it's open
 				updateVariablesPanel(currentTemplate, currentVariables);
+				succeeded = true;
+				successfulRefreshUrl = tab.url;
 			} else {
 				throw new Error('Unable to initialize page content.');
 			}
@@ -740,9 +811,18 @@ async function refreshFields(tabId: number, { checkTemplateTriggers = true, rebu
 			throw new Error('Unable to extract page content.');
 		}
 	} catch (error) {
+		if (!isCurrent()) return;
 		console.error('Error refreshing fields:', error);
 		const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
 		showError(errorMessage);
+	} finally {
+		popupRefreshGate.complete(
+			refreshToken,
+			succeeded,
+			currentTabId,
+			successfulRefreshUrl,
+		);
+		releaseRefresh();
 	}
 }
 
@@ -770,16 +850,6 @@ function populateTemplateDropdown() {
 
 function buildTemplateFieldsSkeleton(template: Template | null) {
 	if (!template) return;
-
-	// Handle vault selection
-	const vaultDropdown = document.getElementById('vault-select') as HTMLSelectElement;
-	if (vaultDropdown) {
-		if (template.vault) {
-			vaultDropdown.value = template.vault;
-		} else if (lastSelectedVault) {
-			vaultDropdown.value = lastSelectedVault;
-		}
-	}
 
 	const existingTemplateProperties = document.querySelector('.metadata-properties') as HTMLElement;
 
@@ -833,22 +903,10 @@ function buildTemplateFieldsSkeleton(template: Template | null) {
 
 	initializeIcons(newTemplateProperties);
 
-	// Set up note name and path fields with template values
+	// Set up editable note fields with template values
 	const noteNameField = document.getElementById('note-name-field') as HTMLTextAreaElement;
 	if (noteNameField) {
 		noteNameField.setAttribute('data-template-value', template.noteNameFormat);
-	}
-
-	const pathField = document.getElementById('path-name-field') as HTMLInputElement;
-	const pathContainer = document.querySelector('.vault-path-container') as HTMLElement;
-	if (pathField && pathContainer) {
-		const isDailyNote = template.behavior === 'append-daily' || template.behavior === 'prepend-daily';
-		if (isDailyNote) {
-			pathField.style.display = 'none';
-		} else {
-			pathContainer.style.display = 'flex';
-			pathField.setAttribute('data-template-value', template.path);
-		}
 	}
 
 	const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement;
@@ -856,51 +914,35 @@ function buildTemplateFieldsSkeleton(template: Template | null) {
 		noteContentField.setAttribute('data-template-value', template.noteContentFormat || '');
 	}
 
-	// Show/hide interpreter section based on template prompt variables
-	const interpreterContainer = document.getElementById('interpreter');
-	const interpretBtn = document.getElementById('interpret-btn');
-	const hasPromptVars = generalSettings.interpreterEnabled && collectPromptVariables(template).length > 0;
-	if (interpreterContainer) interpreterContainer.style.display = hasPromptVars ? 'flex' : 'none';
-	if (interpretBtn) interpretBtn.style.display = hasPromptVars ? 'inline-block' : 'none';
-
-	// Populate model dropdown immediately (only needs generalSettings)
-	if (hasPromptVars) {
-		const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
-		if (modelSelect) {
-			const enabledModels = generalSettings.models.filter(model => model.enabled);
-			modelSelect.textContent = '';
-			enabledModels.forEach(model => {
-				const option = document.createElement('option');
-				option.value = model.id;
-				option.textContent = model.name;
-				modelSelect.appendChild(option);
-			});
-			modelSelect.value = generalSettings.interpreterModel || (enabledModels[0]?.id ?? '');
-			modelSelect.style.display = 'inline-block';
-		}
-	}
 }
 
-async function fillTemplateFieldValues(currentTabId: number, template: Template | null, variables: { [key: string]: string }, schemaOrgData?: any) {
-	if (!template) return;
+async function fillTemplateFieldValues(
+	currentTabId: number,
+	template: Template | null,
+	variables: { [key: string]: string },
+	schemaOrgData?: any,
+	isCurrent: () => boolean = () => true,
+): Promise<boolean> {
+	if (!template || !isCurrent()) return false;
 
-	const currentUrl = currentTabId ? (await getTabInfo(currentTabId)).url || '' : '';
+	const currentUrl = (await getTabInfo(currentTabId)).url || '';
+	if (!isCurrent()) return false;
 
 	currentVariables = variables;
 
-	if (!Array.isArray(template.properties)) return;
+	if (!Array.isArray(template.properties)) return false;
 
 	// Compile all templates in parallel
-	const [compiledPropertyValues, formattedNoteName, formattedPath, formattedContent] = await Promise.all([
+	const [compiledPropertyValues, formattedNoteName, formattedContent] = await Promise.all([
 		Promise.all(template.properties.map(property =>
 			memoizedCompileTemplate(currentTabId!, unescapeValue(property.value), variables, currentUrl)
 		)),
 		memoizedCompileTemplate(currentTabId!, template.noteNameFormat, variables, currentUrl),
-		memoizedCompileTemplate(currentTabId!, template.path, variables, currentUrl),
 		template.noteContentFormat
 			? memoizedCompileTemplate(currentTabId!, template.noteContentFormat, variables, currentUrl)
 			: Promise.resolve('')
 	]);
+	if (!isCurrent()) return false;
 
 	// Fill property values into existing DOM elements
 	for (let i = 0; i < template.properties.length; i++) {
@@ -927,48 +969,15 @@ async function fillTemplateFieldValues(currentTabId: number, template: Template 
 		adjustNoteNameHeight(noteNameField);
 	}
 
-	const pathField = document.getElementById('path-name-field') as HTMLInputElement;
-	if (pathField) {
-		pathField.value = formattedPath;
-	}
-
 	const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement;
 	if (noteContentField) {
 		noteContentField.value = template.noteContentFormat ? formattedContent : '';
 	}
 
-	if (generalSettings.interpreterEnabled) {
-		await initializeInterpreter(template, variables, currentTabId!, currentUrl);
-
-		const promptVariables = collectPromptVariables(template);
-
-		if (generalSettings.interpreterAutoRun && promptVariables.length > 0) {
-			try {
-				const interpretBtn = document.getElementById('interpret-btn') as HTMLButtonElement;
-				const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
-				const selectedModelId = modelSelect?.value || generalSettings.interpreterModel;
-				const modelConfig = generalSettings.models.find(m => m.id === selectedModelId);
-				if (!modelConfig) {
-					throw new Error(`Model configuration not found for ${selectedModelId}`);
-				}
-				await handleInterpreterUI(template, variables, currentTabId!, currentUrl, modelConfig);
-
-				if (interpretBtn) {
-					interpretBtn.classList.add('done');
-					interpretBtn.disabled = true;
-				}
-			} catch (error) {
-				console.error('Error auto-processing with interpreter:', error);
-				const interpretBtn = document.getElementById('interpret-btn') as HTMLButtonElement;
-				if (interpretBtn) {
-					interpretBtn.classList.add('error');
-				}
-			}
-		}
-	}
-
 	const replacedTemplate = await getReplacedTemplate(template, variables, currentTabId!, currentUrl);
+	if (!isCurrent()) return false;
 	debugLog('Variables', 'Current template with replaced variables:', JSON.stringify(replacedTemplate, null, 2));
+	return true;
 }
 
 function setupMetadataToggle() {
@@ -1029,10 +1038,6 @@ async function getReplacedTemplate(template: Template, variables: { [key: string
 		triggers: template.triggers
 	};
 
-	if (template.context) {
-		replacedTemplate.context = await compileTemplate(tabId, template.context, variables, currentUrl);
-	}
-
 	for (const prop of template.properties) {
 		const replacedProp: Property = {
 			id: prop.id,
@@ -1043,41 +1048,6 @@ async function getReplacedTemplate(template: Template, variables: { [key: string
 	}
 
 	return replacedTemplate;
-}
-
-function updateVaultDropdown(vaults: string[]) {
-	const vaultDropdown = document.getElementById('vault-select') as HTMLSelectElement | null;
-	const vaultContainer = document.getElementById('vault-container');
-
-	if (!vaultDropdown || !vaultContainer) return;
-
-	// Clear existing options
-	vaultDropdown.textContent = '';
-	
-	vaults.forEach(vault => {
-		const option = document.createElement('option');
-		option.value = vault;
-		option.textContent = vault;
-		vaultDropdown.appendChild(option);
-	});
-
-	// Only show vault selector if vaults are defined
-	if (vaults.length > 0) {
-		vaultContainer.style.display = 'block';
-		if (lastSelectedVault && vaults.includes(lastSelectedVault)) {
-			vaultDropdown.value = lastSelectedVault;
-		} else {
-			vaultDropdown.value = vaults[0];
-		}
-	} else {
-		vaultContainer.style.display = 'none';
-	}
-
-	// Add event listener to update lastSelectedVault when changed
-	vaultDropdown.addEventListener('change', () => {
-		lastSelectedVault = vaultDropdown.value;
-		setLocalStorage('lastSelectedVault', lastSelectedVault);
-	});
 }
 
 function refreshPopup() {
@@ -1100,7 +1070,7 @@ function setReaderButtonState(isActive: boolean) {
 
 async function checkReaderModeState(tabId: number) {
 	try {
-		// When embedded in a reader.html page, we know reader mode is active
+		// When nested in a reader.html page, we know reader mode is active
 		if (urlParams.get('readerUrl')) {
 			setReaderButtonState(true);
 			return;
@@ -1180,7 +1150,7 @@ function updateHighlighterModeUI(isActive: boolean) {
 
 async function toggleReaderMode(tabId: number) {
 	try {
-		// When embedded in a reader.html page, pass the reader URL
+		// When nested in a reader.html page, pass the reader URL
 		// so the background can navigate away even without tab URL access
 		const response = await browser.runtime.sendMessage({
 			action: "toggleReaderMode",
@@ -1200,212 +1170,6 @@ async function toggleReaderMode(tabId: number) {
 		console.error('Error toggling reader mode:', error);
 		showError('failedToToggleReaderMode');
 	}
-}
-
-export async function copyToClipboard(content: string) {
-	try {
-		try {
-			await navigator.clipboard.writeText(content);
-		} catch {
-			await browser.runtime.sendMessage({
-				action: 'copy-to-clipboard',
-				text: content
-			});
-		}
-
-		const pathField = document.getElementById('path-name-field') as HTMLInputElement;
-		const vaultDropdown = document.getElementById('vault-select') as HTMLSelectElement;
-		const path = pathField?.value || '';
-		const vault = vaultDropdown?.value || '';
-		
-		const tabInfo = await getCurrentTabInfo();
-		await incrementStat('copyToClipboard', vault, path, tabInfo.url, tabInfo.title);
-
-		// Change the main button text temporarily
-		const clipButton = document.getElementById('clip-btn');
-		if (clipButton) {
-			const originalText = clipButton.textContent || getMessage('addToObsidian');
-			clipButton.textContent = getMessage('copied');
-			
-			// Reset the text after 1.5 seconds
-			setTimeout(() => {
-				clipButton.textContent = originalText;
-			}, 1500);
-		}
-	} catch (error) {
-		console.error('Failed to copy to clipboard:', error);
-		showError('failedToCopyText');
-	}
-}
-
-async function handleSaveToDownloads() {
-	try {
-		const noteNameField = document.getElementById('note-name-field') as HTMLInputElement;
-		const pathField = document.getElementById('path-name-field') as HTMLInputElement;
-		const vaultDropdown = document.getElementById('vault-select') as HTMLSelectElement;
-		
-		let fileName = noteNameField?.value || 'untitled';
-		const path = pathField?.value || '';
-		const vault = vaultDropdown?.value || '';
-		
-		const properties = getPropertiesFromDOM();
-
-		const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement;
-		const frontmatter = await generateFrontmatter(properties);
-		const fileContent = frontmatter + noteContentField.value;
-
-		await saveFile({
-			content: fileContent,
-			fileName,
-			mimeType: 'text/markdown',
-			tabId: currentTabId,
-			onError: (error) => showError('failedToSaveFile')
-		});
-
-		const tabInfo = await getCurrentTabInfo();
-		await incrementStat('saveFile', vault, path, tabInfo.url, tabInfo.title);
-
-		const moreDropdown = document.getElementById('more-dropdown');
-		if (moreDropdown) {
-			moreDropdown.classList.remove('show');
-		}
-	} catch (error) {
-		console.error('Failed to save file:', error);
-		showError('failedToSaveFile');
-	}
-}
-
-function determineMainAction() {
-	const mainButton = document.getElementById('clip-btn');
-	const moreDropdown = document.getElementById('more-dropdown');
-	const secondaryActions = moreDropdown?.querySelector('.secondary-actions');
-	if (!mainButton || !secondaryActions) return;
-
-	// Clear existing secondary actions
-	secondaryActions.textContent = '';
-
-	// Set up actions based on saved behavior
-	switch (loadedSettings.saveBehavior) {
-		case 'copyToClipboard':
-			mainButton.textContent = getMessage('copyToClipboard');
-			mainButton.onclick = () => copyContent();
-			// Add direct actions to secondary
-			addSecondaryAction(secondaryActions, 'addToObsidian', () => handleClipObsidian());
-			addSecondaryAction(secondaryActions, 'saveFile', handleSaveToDownloads);
-			break;
-		case 'saveFile':
-			mainButton.textContent = getMessage('saveFile');
-			mainButton.onclick = () => handleSaveToDownloads();
-			// Add direct actions to secondary
-			addSecondaryAction(secondaryActions, 'addToObsidian', () => handleClipObsidian());
-			addSecondaryAction(secondaryActions, 'copyToClipboard', copyContent);
-			break;
-		default: // 'addToObsidian'
-			mainButton.textContent = getMessage('addToObsidian');
-			mainButton.onclick = () => handleClipObsidian();
-			// Add direct actions to secondary
-			addSecondaryAction(secondaryActions, 'copyToClipboard', copyContent);
-			addSecondaryAction(secondaryActions, 'saveFile', handleSaveToDownloads);
-	}
-}
-
-async function handleClipObsidian(): Promise<void> {
-	if (!currentTemplate) return;
-
-	const vaultDropdown = document.getElementById('vault-select') as HTMLSelectElement;
-	const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement;
-	const noteNameField = document.getElementById('note-name-field') as HTMLInputElement;
-	const pathField = document.getElementById('path-name-field') as HTMLInputElement;
-	const interpretBtn = document.getElementById('interpret-btn') as HTMLButtonElement;
-
-	if (!vaultDropdown || !noteContentField) {
-		showError('Some required fields are missing. Please try reloading the extension.');
-		return;
-	}
-
-	try {
-		// Handle interpreter if needed
-		if (generalSettings.interpreterEnabled && interpretBtn && collectPromptVariables(currentTemplate).length > 0) {
-			if (interpretBtn.classList.contains('processing')) {
-				await waitForInterpreter(interpretBtn);
-			} else if (!interpretBtn.classList.contains('done')) {
-				interpretBtn.click();
-				await waitForInterpreter(interpretBtn);
-			}
-		}
-
-		// Gather content
-		const properties = getPropertiesFromDOM();
-
-		const frontmatter = await generateFrontmatter(properties);
-		const fileContent = frontmatter + noteContentField.value;
-
-		// Save to Obsidian
-		const selectedVault = vaultDropdown.value || currentTemplate.vault || '';
-		const isDailyNote = currentTemplate.behavior === 'append-daily' || currentTemplate.behavior === 'prepend-daily';
-		const noteName = isDailyNote ? '' : noteNameField?.value || '';
-		const path = isDailyNote ? '' : pathField?.value || '';
-
-		await saveToObsidian(fileContent, noteName, path, selectedVault, currentTemplate.behavior);
-		const tabInfo = await getCurrentTabInfo();
-		await incrementStat('addToObsidian', selectedVault, path, tabInfo.url, tabInfo.title);
-
-		lastSelectedVault = selectedVault;
-		await setLocalStorage('lastSelectedVault', lastSelectedVault);
-
-		if (!isSidePanel) {
-			setTimeout(() => window.close(), 500);
-		}
-	} catch (error) {
-		console.error('Error in handleClipObsidian:', error);
-		showError('failedToSaveFile');
-		throw error;
-	}
-}
-
-function addSecondaryAction(container: Element, actionType: string, handler: () => void) {
-	const menuItem = document.createElement('div');
-	menuItem.className = 'menu-item';
-	
-	// Create menu item icon container
-	const menuItemIcon = document.createElement('div');
-	menuItemIcon.className = 'menu-item-icon';
-	
-	const iconElement = document.createElement('i');
-	iconElement.setAttribute('data-lucide', getActionIcon(actionType));
-	menuItemIcon.appendChild(iconElement);
-	
-	// Create menu item title
-	const menuItemTitle = document.createElement('div');
-	menuItemTitle.className = 'menu-item-title';
-	menuItemTitle.setAttribute('data-i18n', actionType);
-	menuItemTitle.textContent = getMessage(actionType);
-	
-	// Assemble menu item
-	menuItem.appendChild(menuItemIcon);
-	menuItem.appendChild(menuItemTitle);
-	
-	menuItem.addEventListener('click', handler);
-	container.appendChild(menuItem);
-	initializeIcons(menuItem);
-}
-
-function getActionIcon(actionType: string): string {
-	switch (actionType) {
-		case 'copyToClipboard': return 'copy';
-		case 'saveFile': return 'file-down';
-		case 'addToObsidian': return 'pen-line';
-		default: return 'plus';
-	}
-}
-
-async function copyContent() {
-	const properties = getPropertiesFromDOM();
-
-	const noteContentField = document.getElementById('note-content-field') as HTMLTextAreaElement;
-	const frontmatter = await generateFrontmatter(properties);
-	const fileContent = frontmatter + noteContentField.value;
-	await copyToClipboard(fileContent);
 }
 
 // Update the resize event listener to use the debounced version

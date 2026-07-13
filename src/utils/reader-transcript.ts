@@ -276,11 +276,11 @@ export function wireTranscript(
 			const chapter = newIndex >= 0 ? segmentChapters[newIndex] : null;
 			if (chapter !== activeChapter) {
 				if (activeChapter?.id) {
-					doc.querySelector(`.obsidian-reader-outline-item[data-heading-id="${activeChapter.id}"]`)
+					doc.querySelector(`.open-markdown-clipper-reader-outline-item[data-heading-id="${activeChapter.id}"]`)
 						?.classList.remove('in-progress');
 				}
 				if (chapter?.id) {
-					doc.querySelector(`.obsidian-reader-outline-item[data-heading-id="${chapter.id}"]`)
+					doc.querySelector(`.open-markdown-clipper-reader-outline-item[data-heading-id="${chapter.id}"]`)
 						?.classList.add('in-progress');
 				}
 				activeChapter = chapter;
@@ -654,7 +654,7 @@ export function wireTranscript(
 	// Click anywhere in a segment to seek to that position
 	transcript.addEventListener('click', (e: MouseEvent) => {
 		// Don't seek if highlighter is active or user was selecting text
-		if (doc.body.classList.contains('obsidian-highlighter-active')) return;
+		if (doc.body.classList.contains('open-markdown-clipper-highlighter-active')) return;
 		const selection = window.getSelection();
 		if (selection && selection.toString().length > 0) return;
 

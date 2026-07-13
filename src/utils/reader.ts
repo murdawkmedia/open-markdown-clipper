@@ -9,15 +9,11 @@ import type { HighlighterAPI } from './highlighter';
 import * as localHighlighter from './highlighter';
 import { removeExistingHighlights as localRemoveExistingHighlights } from './highlighter-overlays';
 
-// Bridge: on a live page with reader mode (case 2), content.js already loaded
-// and owns the highlighter module. reader-script.js delegates to it via this
-// window global to avoid two independent `highlights[]` arrays on the same
-// tab. On the standalone reader.html (case 3), no content.js exists — the
-// direct import is the only copy and serves as the fallback. Cached after
-// first resolution so the fallback spread doesn't re-allocate per call.
+// Cache the extension-reader highlighter API. The optional bridge remains for
+// source-level compatibility, while production Reader runs on reader.html.
 let _hl: HighlighterAPI;
 function hl(): HighlighterAPI {
-	return _hl ??= window.__obsidianHighlighter ?? {
+	return _hl ??= window.__openMarkdownClipperHighlighter ?? {
 		...localHighlighter,
 		removeExistingHighlights: localRemoveExistingHighlights,
 		ensureHighlighterCSS: () => Reader.ensureHighlighterCSS(document),
@@ -26,11 +22,11 @@ function hl(): HighlighterAPI {
 import { copyToClipboard } from './clipboard-utils';
 import { getMessage, initializeI18n } from './i18n';
 import { getFontCss, isFontAvailable } from './font-utils';
-import { createMarkdownContent } from 'defuddle/full';
-import { saveFile } from './file-utils';
-import { parseForClip } from './clip-utils';
+import { createDocumentDestinationRuntime } from './document-destination-runtime';
+import type { DocumentDestinationRuntime } from './document-destination-runtime';
 import { updateSidebarWidth, addResizeHandle, cleanupResizeHandlers } from './iframe-resize';
 import { setElementHTML, setSVGChildren, serializeChildren } from './dom-utils';
+import { DestinationError, type DestinationKind } from '../destinations/types';
 
 // Mobile viewport settings
 const VIEWPORT = 'width=device-width, initial-scale=1, maximum-scale=1';
@@ -49,7 +45,293 @@ interface ReaderContent {
 	extractorType?: string;
 }
 
+type ReaderExplicitDestination = Extract<DestinationKind, 'clipboard' | 'download'>;
+
+export interface ReaderDestinationAction {
+	readonly destination?: ReaderExplicitDestination;
+	readonly label: string;
+	readonly icon: Node;
+}
+
+export interface ReaderDestinationMessages {
+	readonly success: string;
+	readonly failure: string;
+	readonly outcomeUnknown?: string;
+}
+
+export interface ReaderDestinationReadinessState {
+	readonly revision: number;
+	readonly ready: boolean;
+}
+
+export interface ReaderDestinationRevision {
+	readonly revision: number;
+	readonly previousReady: boolean;
+}
+
+export interface ReaderDestinationMenu extends HTMLDivElement {
+	dispose(): void;
+}
+
+type ReaderDestinationReadinessListener = (
+	state: ReaderDestinationReadinessState,
+) => void;
+
+export class ReaderDestinationReadinessGate {
+	private revision = 0;
+	private ready = false;
+	private stableReady = false;
+	private readonly listeners = new Set<ReaderDestinationReadinessListener>();
+
+	begin(): ReaderDestinationRevision {
+		const transition = Object.freeze({
+			revision: ++this.revision,
+			previousReady: this.stableReady,
+		});
+		this.ready = false;
+		this.emit();
+		return transition;
+	}
+
+	beginFresh(): ReaderDestinationRevision {
+		this.stableReady = false;
+		return this.begin();
+	}
+
+	complete(transition: ReaderDestinationRevision): boolean {
+		if (!this.isCurrent(transition)) return false;
+		this.ready = true;
+		this.stableReady = true;
+		this.emit();
+		return true;
+	}
+
+	restore(transition: ReaderDestinationRevision): boolean {
+		if (!this.isCurrent(transition)) return false;
+		this.ready = transition.previousReady;
+		this.stableReady = transition.previousReady;
+		this.emit();
+		return true;
+	}
+
+	fail(transition: ReaderDestinationRevision): boolean {
+		if (!this.isCurrent(transition)) return false;
+		this.ready = false;
+		this.stableReady = false;
+		this.emit();
+		return true;
+	}
+
+	settleFailure(
+		transition: ReaderDestinationRevision,
+		mutationStarted: boolean,
+	): boolean {
+		return mutationStarted
+			? this.fail(transition)
+			: this.restore(transition);
+	}
+
+	deactivate(): void {
+		this.revision += 1;
+		this.ready = false;
+		this.stableReady = false;
+		this.emit();
+	}
+
+	state(): ReaderDestinationReadinessState {
+		return Object.freeze({ revision: this.revision, ready: this.ready });
+	}
+
+	isCurrent(transition: ReaderDestinationRevision | number): boolean {
+		const revision = typeof transition === 'number'
+			? transition
+			: transition.revision;
+		return revision === this.revision;
+	}
+
+	subscribe(listener: ReaderDestinationReadinessListener): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	private emit(): void {
+		const state = this.state();
+		for (const listener of this.listeners) {
+			try {
+				listener(state);
+			} catch {
+				// A detached reader control must not break the readiness lifecycle.
+			}
+		}
+	}
+}
+
+export interface ReaderDropdownController {
+	open(): void;
+	close(): void;
+	toggle(): void;
+}
+
+export function createReaderDropdownController(
+	trigger: HTMLButtonElement,
+	dropdown: HTMLElement,
+): ReaderDropdownController {
+	const setOpen = (open: boolean) => {
+		dropdown.classList.toggle('is-open', open);
+		trigger.setAttribute('aria-expanded', String(open));
+	};
+	const controller = Object.freeze({
+		open: () => setOpen(true),
+		close: () => setOpen(false),
+		toggle: () => setOpen(!dropdown.classList.contains('is-open')),
+	});
+	controller.close();
+	return controller;
+}
+
+export function wireAwaitedReaderToggle(
+	button: HTMLButtonElement,
+	isOpen: () => boolean,
+	toggle: () => boolean | Promise<boolean>,
+): void {
+	let toggleInProgress = false;
+	button.setAttribute('aria-pressed', String(isOpen()));
+	button.setAttribute('aria-busy', 'false');
+
+	button.addEventListener('click', async (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		if (toggleInProgress) return;
+
+		toggleInProgress = true;
+		button.disabled = true;
+		button.setAttribute('aria-busy', 'true');
+		try {
+			const open = await toggle();
+			button.setAttribute('aria-pressed', String(open));
+		} catch {
+			// Preserve the last confirmed state without exposing implementation errors.
+		} finally {
+			toggleInProgress = false;
+			button.disabled = false;
+			button.setAttribute('aria-busy', 'false');
+		}
+	});
+}
+
+/**
+ * Build the reader's delivery menu in the extension-origin reader context.
+ * injectSettingsBar returns before this is instantiated outside reader.html.
+ */
+export function createReaderDestinationMenu(
+	doc: Document,
+	runtime: Pick<DocumentDestinationRuntime, 'deliver'>,
+	readiness: ReaderDestinationReadinessGate,
+	actions: readonly ReaderDestinationAction[],
+	messages: ReaderDestinationMessages,
+): ReaderDestinationMenu {
+	const menu = doc.createElement('div') as ReaderDestinationMenu;
+	menu.className = 'open-markdown-clipper-reader-clip-dropdown';
+
+	const status = doc.createElement('div');
+	status.setAttribute('role', 'status');
+	status.setAttribute('aria-live', 'polite');
+	status.style.padding = '0 var(--size-4-2)';
+	status.style.fontSize = 'var(--font-ui-small)';
+
+	const buttons: HTMLButtonElement[] = [];
+	let deliveryInProgress = false;
+	let readinessState = readiness.state();
+	let displayedRevision = readinessState.revision;
+
+	const syncButtons = () => {
+		const disabled = deliveryInProgress || !readinessState.ready;
+		for (const candidate of buttons) candidate.disabled = disabled;
+	};
+
+	for (const action of actions) {
+		const button = doc.createElement('button');
+		button.type = 'button';
+		button.className = 'open-markdown-clipper-reader-clip-item';
+		button.style.width = '100%';
+		button.style.border = 'none';
+		button.style.background = 'transparent';
+		button.style.fontFamily = 'inherit';
+		button.style.textAlign = 'left';
+		button.disabled = !readinessState.ready;
+		button.appendChild(action.icon);
+
+		const label = doc.createElement('span');
+		label.textContent = action.label;
+		button.appendChild(label);
+
+		button.addEventListener('click', async (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const deliveryState = readiness.state();
+			if (deliveryInProgress || !deliveryState.ready) return;
+
+			deliveryInProgress = true;
+			status.textContent = '';
+			readinessState = deliveryState;
+			syncButtons();
+
+			try {
+				if (action.destination === undefined) {
+					await runtime.deliver();
+				} else {
+					await runtime.deliver(action.destination);
+				}
+				const currentState = readiness.state();
+				if (
+					currentState.ready
+					&& currentState.revision === deliveryState.revision
+				) {
+					status.textContent = messages.success;
+				}
+			} catch (error) {
+				const currentState = readiness.state();
+				if (
+					currentState.ready
+					&& currentState.revision === deliveryState.revision
+				) {
+					status.textContent = error instanceof DestinationError
+						&& error.code === 'local-http-outcome-unknown'
+						? messages.outcomeUnknown ?? messages.failure
+						: messages.failure;
+				}
+			} finally {
+				deliveryInProgress = false;
+				readinessState = readiness.state();
+				syncButtons();
+			}
+		});
+
+		buttons.push(button);
+		menu.appendChild(button);
+	}
+
+	menu.appendChild(status);
+	const unsubscribe = readiness.subscribe((state) => {
+		readinessState = state;
+		if (state.revision !== displayedRevision) {
+			displayedRevision = state.revision;
+			status.textContent = '';
+		}
+		syncButtons();
+	});
+	let disposed = false;
+	menu.dispose = () => {
+		if (disposed) return;
+		disposed = true;
+		unsubscribe();
+	};
+	return menu;
+}
+
 export class Reader {
+	private static readonly destinationReadiness = new ReaderDestinationReadinessGate();
+	private static destinationMenuCleanup: (() => void) | null = null;
 	private static hasApplied: boolean = false;
 	private static isActive: boolean = false;
 	private static programmaticScroll: boolean = false;
@@ -59,6 +341,38 @@ export class Reader {
 	// Callback for SPA-style navigation on the reader page.
 	// Set by reader-view.ts to handle link clicks without full page reload.
 	static onNavigate: ((url: string) => void) | null = null;
+
+	static beginDestinationNavigation(): ReaderDestinationRevision {
+		return this.destinationReadiness.begin();
+	}
+
+	static isDestinationNavigationCurrent(
+		transition: ReaderDestinationRevision,
+	): boolean {
+		return this.destinationReadiness.isCurrent(transition);
+	}
+
+	static completeDestinationNavigation(
+		transition: ReaderDestinationRevision,
+	): boolean {
+		return this.destinationReadiness.complete(transition);
+	}
+
+	static restoreDestinationNavigation(
+		transition: ReaderDestinationRevision,
+	): boolean {
+		return this.destinationReadiness.restore(transition);
+	}
+
+	static settleDestinationNavigationFailure(
+		transition: ReaderDestinationRevision,
+		mutationStarted: boolean,
+	): boolean {
+		return this.destinationReadiness.settleFailure(
+			transition,
+			mutationStarted,
+		);
+	}
 
 	// Pre-extracted content to skip Defuddle re-extraction in Reader.apply.
 	// Set this before calling apply() to use already-extracted content.
@@ -182,13 +496,18 @@ export class Reader {
 	}
 
 	private static injectSettingsBar(doc: Document) {
+		this.destinationMenuCleanup?.();
+		this.destinationMenuCleanup = null;
+		if (!this.isReaderPage) return;
+
 		// Create settings bar
 		const settingsBar = doc.createElement('div');
-		settingsBar.className = 'obsidian-reader-settings';
+		settingsBar.className = 'open-markdown-clipper-reader-settings';
+		let dropdownController: ReaderDropdownController | undefined;
 
 		// Trigger button (always visible)
 		const trigger = doc.createElement('button');
-		trigger.className = 'obsidian-reader-settings-trigger nav-btn';
+		trigger.className = 'open-markdown-clipper-reader-settings-trigger nav-btn';
 		trigger.setAttribute('aria-label', getMessage('settings'));
 		trigger.appendChild(this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
@@ -197,7 +516,7 @@ export class Reader {
 		}));
 		trigger.addEventListener('click', (e) => {
 			e.stopPropagation();
-			clipDropdown.classList.remove('is-open');
+			dropdownController?.close();
 			settingsBar.classList.toggle('is-open');
 		});
 
@@ -210,21 +529,21 @@ export class Reader {
 
 		// Highlighter button
 		const highlighterBtn = doc.createElement('button');
-		highlighterBtn.className = 'obsidian-reader-settings-trigger nav-btn';
+		highlighterBtn.className = 'open-markdown-clipper-reader-settings-trigger nav-btn';
 		highlighterBtn.setAttribute('aria-label', getMessage('highlighter'));
 		highlighterBtn.appendChild(this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
 			paths: ['m9 11-6 6v3h9l3-3', 'm22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4'],
 		}));
 		highlighterBtn.addEventListener('click', async () => {
-			clipDropdown.classList.remove('is-open');
+			dropdownController?.close();
 			settingsBar.classList.remove('is-open');
 			await Reader.toggleHighlighter(doc);
 		});
 
 		// Sync active state with highlighter mode
 		const syncHighlighterBtn = () => {
-			highlighterBtn.classList.toggle('is-active', doc.body.classList.contains('obsidian-highlighter-active'));
+			highlighterBtn.classList.toggle('is-active', doc.body.classList.contains('open-markdown-clipper-highlighter-active'));
 		};
 		syncHighlighterBtn();
 		this.highlighterObserver = new MutationObserver(syncHighlighterBtn);
@@ -232,86 +551,80 @@ export class Reader {
 
 		// Clip button with dropdown
 		const clipButton = doc.createElement('button');
-		clipButton.className = 'obsidian-reader-settings-trigger nav-btn';
-		clipButton.setAttribute('aria-label', getMessage('addToObsidian'));
+		clipButton.type = 'button';
+		clipButton.className = 'open-markdown-clipper-reader-settings-trigger nav-btn';
+		clipButton.setAttribute('aria-label', getMessage('readerDeliverMarkdown'));
+		clipButton.setAttribute('aria-expanded', 'false');
 		clipButton.appendChild(this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
 			paths: ['m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48'],
 		}));
 
-		const addToObsidianBtn = doc.createElement('button');
-		addToObsidianBtn.className = 'nav-btn';
-		addToObsidianBtn.setAttribute('aria-label', getMessage('addToObsidian'));
-		const obsidianIcon = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-		obsidianIcon.setAttribute('width', '18');
-		obsidianIcon.setAttribute('height', '18');
-		obsidianIcon.setAttribute('viewBox', '0 0 256 256');
-		obsidianIcon.setAttribute('fill', 'currentColor');
-		setSVGChildren(obsidianIcon, '<path d="M94.82 149.44c6.53-1.94 17.13-4.9 29.26-5.71a102.97 102.97 0 0 1-7.64-48.84c1.63-16.51 7.54-30.38 13.25-42.1l3.47-7.14 4.48-9.18c2.35-5 4.08-9.38 4.9-13.56.81-4.07.81-7.64-.2-11.11-1.03-3.47-3.07-7.14-7.15-11.21a17.02 17.02 0 0 0-15.8 3.77l-52.81 47.5a17.12 17.12 0 0 0-5.5 10.2l-4.5 30.18a149.26 149.26 0 0 1 38.24 57.2ZM54.45 106l-1.02 3.06-27.94 62.2a17.33 17.33 0 0 0 3.27 18.96l43.94 45.16a88.7 88.7 0 0 0 8.97-88.5A139.47 139.47 0 0 0 54.45 106Z"/><path d="m82.9 240.79 2.34.2c8.26.2 22.33 1.02 33.64 3.06 9.28 1.73 27.73 6.83 42.82 11.21 11.52 3.47 23.45-5.8 25.08-17.73 1.23-8.67 3.57-18.46 7.75-27.53a94.81 94.81 0 0 0-25.9-40.99 56.48 56.48 0 0 0-29.56-13.35 96.55 96.55 0 0 0-40.99 4.79 98.89 98.89 0 0 1-15.29 80.34h.1Z"/><path d="M201.87 197.76a574.87 574.87 0 0 0 19.78-31.6 8.67 8.67 0 0 0-.61-9.48 185.58 185.58 0 0 1-21.82-35.9c-5.91-14.16-6.73-36.08-6.83-46.69 0-4.07-1.22-8.05-3.77-11.21l-34.16-43.33c0 1.94-.4 3.87-.81 5.81a76.42 76.42 0 0 1-5.71 15.9l-4.7 9.8-3.36 6.72a111.95 111.95 0 0 0-12.03 38.23 93.9 93.9 0 0 0 8.67 47.92 67.9 67.9 0 0 1 39.56 16.52 99.4 99.4 0 0 1 25.8 37.31Z"/>');
-		addToObsidianBtn.appendChild(obsidianIcon);
-		addToObsidianBtn.addEventListener('click', () => {
-			if (Reader.isReaderPage) {
-				Reader.toggleReaderPageIframe(doc);
-			} else {
-				browser.runtime.sendMessage({ action: 'toggleIframe' });
-			}
-		});
+		const openClipperBtn = doc.createElement('button');
+		openClipperBtn.type = 'button';
+		openClipperBtn.className = 'nav-btn';
+		openClipperBtn.setAttribute('aria-label', getMessage('readerOpenClipper'));
+		const clipperIcon = doc.createElement('img');
+		clipperIcon.src = browser.runtime.getURL('icons/icon16.png');
+		clipperIcon.width = 18;
+		clipperIcon.height = 18;
+		clipperIcon.alt = '';
+		clipperIcon.setAttribute('aria-hidden', 'true');
+		openClipperBtn.appendChild(clipperIcon);
+		wireAwaitedReaderToggle(
+			openClipperBtn,
+			() => Boolean(doc.getElementById('open-markdown-clipper-container')),
+			async () => {
+				dropdownController?.close();
+				return Reader.toggleReaderPageIframe(doc);
+			},
+		);
 
-		const clipDropdown = doc.createElement('div');
-		clipDropdown.className = 'obsidian-reader-clip-dropdown';
-
-		const clipActions: Array<{ action: string; icon: SVGElement }> = [
-			{ action: 'copyToClipboard', icon: this.createSVG({ width: '16', height: '16', viewBox: '0 0 24 24', strokeWidth: '1.75', paths: ['M20 8H10a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2z', 'M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2'] }) },
-			{ action: 'saveFile', icon: this.createSVG({ width: '16', height: '16', viewBox: '0 0 24 24', strokeWidth: '1.75', paths: ['M12 17V3', 'm6 11 6 6 6-6', 'M19 21H5'] }) },
-		];
-
-		for (const { action, icon } of clipActions) {
-			const item = doc.createElement('div');
-			item.className = 'obsidian-reader-clip-item';
-			item.appendChild(icon);
-
-			const itemLabel = doc.createElement('span');
-			itemLabel.textContent = getMessage(action);
-			item.appendChild(itemLabel);
-
-			item.addEventListener('click', async () => {
-				if (action === 'copyToClipboard') {
-					const originalText = itemLabel.textContent;
-					if (Reader.isReaderPage) {
-						Reader.copyMarkdownOnReaderPage(doc);
-					} else {
-						browser.runtime.sendMessage({ action: 'copyMarkdownToClipboard' });
-					}
-					itemLabel.textContent = getMessage('copied');
-					setTimeout(() => { itemLabel.textContent = originalText; }, 2000);
-				} else if (action === 'saveFile') {
-					clipDropdown.classList.remove('is-open');
-					if (Reader.isReaderPage) {
-						Reader.saveMarkdownOnReaderPage(doc);
-					} else {
-						browser.runtime.sendMessage({ action: 'saveMarkdownToFile' });
-					}
-				}
-			});
-
-			clipDropdown.appendChild(item);
-		}
+		const destinationRuntime = createDocumentDestinationRuntime({ document: doc });
+		const clipDropdown = createReaderDestinationMenu(
+			doc,
+			destinationRuntime,
+			this.destinationReadiness,
+			[
+				{
+					label: getMessage('readerDefaultDestination'),
+					icon: this.createSVG({ width: '16', height: '16', viewBox: '0 0 24 24', strokeWidth: '1.75', paths: ['m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57'] }),
+				},
+				{
+					destination: 'clipboard',
+					label: getMessage('readerClipboardDestination'),
+					icon: this.createSVG({ width: '16', height: '16', viewBox: '0 0 24 24', strokeWidth: '1.75', paths: ['M20 8H10a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2z', 'M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2'] }),
+				},
+				{
+					destination: 'download',
+					label: getMessage('readerDownloadDestination'),
+					icon: this.createSVG({ width: '16', height: '16', viewBox: '0 0 24 24', strokeWidth: '1.75', paths: ['M12 17V3', 'm6 11 6 6 6-6', 'M19 21H5'] }),
+				},
+			],
+			{
+				success: getMessage('readerDeliverySuccess'),
+				failure: getMessage('readerDeliveryFailed'),
+				outcomeUnknown: getMessage('localHttpOutcomeUnknown'),
+			},
+		);
+		dropdownController = createReaderDropdownController(clipButton, clipDropdown);
+		this.destinationMenuCleanup = () => clipDropdown.dispose();
 
 		clipButton.addEventListener('click', (e) => {
 			e.stopPropagation();
 			settingsBar.classList.remove('is-open');
-			clipDropdown.classList.toggle('is-open');
+			dropdownController?.toggle();
 		});
 
 		doc.addEventListener('click', (e) => {
 			if (!clipButton.contains(e.target as Node) && !clipDropdown.contains(e.target as Node)) {
-				clipDropdown.classList.remove('is-open');
+				dropdownController?.close();
 			}
 		});
 
 		// Outline button (mobile only, hidden until outline is generated)
 		const outlineBtn = doc.createElement('button');
-		outlineBtn.className = 'obsidian-reader-settings-trigger nav-btn nav-btn-outline';
+		outlineBtn.className = 'open-markdown-clipper-reader-settings-trigger nav-btn nav-btn-outline';
 		outlineBtn.setAttribute('aria-label', 'Outline');
 		outlineBtn.classList.add('is-hidden');
 		outlineBtn.appendChild(this.createSVG({
@@ -321,11 +634,11 @@ export class Reader {
 
 		// Create mobile outline overlay
 		const outlineOverlay = doc.createElement('div');
-		outlineOverlay.className = 'obsidian-reader-outline-overlay';
+		outlineOverlay.className = 'open-markdown-clipper-reader-outline-overlay';
 
 		outlineBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			clipDropdown.classList.remove('is-open');
+			dropdownController?.close();
 			settingsBar.classList.remove('is-open');
 			const isOpen = outlineOverlay.classList.toggle('is-open');
 			outlineBtn.classList.toggle('is-active', isOpen);
@@ -335,12 +648,12 @@ export class Reader {
 		doc.body.appendChild(outlineOverlay);
 
 		const triggerGroup = doc.createElement('div');
-		triggerGroup.className = 'obsidian-reader-nav';
+		triggerGroup.className = 'open-markdown-clipper-reader-nav';
 		triggerGroup.appendChild(outlineBtn);
 		triggerGroup.appendChild(highlighterBtn);
 		triggerGroup.appendChild(clipButton);
 		triggerGroup.appendChild(trigger);
-		triggerGroup.appendChild(addToObsidianBtn);
+		triggerGroup.appendChild(openClipperBtn);
 		settingsBar.appendChild(triggerGroup);
 		settingsBar.appendChild(clipDropdown);
 
@@ -402,14 +715,14 @@ export class Reader {
 
 		// Create settings controls container
 		const controlsContainer = doc.createElement('div');
-		controlsContainer.className = 'obsidian-reader-settings-controls';
+		controlsContainer.className = 'open-markdown-clipper-reader-settings-controls';
 
 		// Font size controls group
 		const fontGroup = doc.createElement('div');
-		fontGroup.className = 'obsidian-reader-settings-controls-group';
+		fontGroup.className = 'open-markdown-clipper-reader-settings-controls-group';
 
 		const decreaseFontBtn = doc.createElement('button');
-		decreaseFontBtn.className = 'obsidian-reader-settings-button';
+		decreaseFontBtn.className = 'open-markdown-clipper-reader-settings-button';
 		decreaseFontBtn.dataset.action = 'decrease-font';
 		decreaseFontBtn.appendChild(this.createSVG({
 			width: '20', height: '20', viewBox: '0 0 24 24',
@@ -418,7 +731,7 @@ export class Reader {
 		}));
 
 		const increaseFontBtn = doc.createElement('button');
-		increaseFontBtn.className = 'obsidian-reader-settings-button';
+		increaseFontBtn.className = 'open-markdown-clipper-reader-settings-button';
 		increaseFontBtn.dataset.action = 'increase-font';
 		increaseFontBtn.appendChild(this.createSVG({
 			width: '20', height: '20', viewBox: '0 0 24 24',
@@ -431,10 +744,10 @@ export class Reader {
 
 		// Width controls group
 		const widthGroup = doc.createElement('div');
-		widthGroup.className = 'obsidian-reader-settings-controls-group';
+		widthGroup.className = 'open-markdown-clipper-reader-settings-controls-group';
 
 		const decreaseWidthBtn = doc.createElement('button');
-		decreaseWidthBtn.className = 'obsidian-reader-settings-button';
+		decreaseWidthBtn.className = 'open-markdown-clipper-reader-settings-button';
 		decreaseWidthBtn.dataset.action = 'decrease-width';
 		decreaseWidthBtn.appendChild(this.createSVG({
 			width: '20', height: '20', viewBox: '0 0 24 24',
@@ -442,7 +755,7 @@ export class Reader {
 		}));
 
 		const increaseWidthBtn = doc.createElement('button');
-		increaseWidthBtn.className = 'obsidian-reader-settings-button';
+		increaseWidthBtn.className = 'open-markdown-clipper-reader-settings-button';
 		increaseWidthBtn.dataset.action = 'increase-width';
 		increaseWidthBtn.appendChild(this.createSVG({
 			width: '20', height: '20', viewBox: '0 0 24 24',
@@ -455,10 +768,10 @@ export class Reader {
 
 		// Line height controls group
 		const lineHeightGroup = doc.createElement('div');
-		lineHeightGroup.className = 'obsidian-reader-settings-controls-group';
+		lineHeightGroup.className = 'open-markdown-clipper-reader-settings-controls-group';
 
 		const decreaseLineHeightBtn = doc.createElement('button');
-		decreaseLineHeightBtn.className = 'obsidian-reader-settings-button';
+		decreaseLineHeightBtn.className = 'open-markdown-clipper-reader-settings-button';
 		decreaseLineHeightBtn.dataset.action = 'decrease-line-height';
 		decreaseLineHeightBtn.appendChild(this.createSVG({
 			width: '20', height: '20', viewBox: '0 0 24 24',
@@ -466,7 +779,7 @@ export class Reader {
 		}));
 
 		const increaseLineHeightBtn = doc.createElement('button');
-		increaseLineHeightBtn.className = 'obsidian-reader-settings-button';
+		increaseLineHeightBtn.className = 'open-markdown-clipper-reader-settings-button';
 		increaseLineHeightBtn.dataset.action = 'increase-line-height';
 		increaseLineHeightBtn.appendChild(this.createSVG({
 			width: '20', height: '20', viewBox: '0 0 24 24',
@@ -479,7 +792,7 @@ export class Reader {
 
 		// Theme select
 		const themeWrapper = doc.createElement('div');
-		themeWrapper.className = 'obsidian-reader-settings-select-wrapper';
+		themeWrapper.className = 'open-markdown-clipper-reader-settings-select-wrapper';
 		themeWrapper.appendChild(this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
 			circles: [
@@ -491,7 +804,7 @@ export class Reader {
 			paths: ['M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z'],
 		}));
 		const themeSelect = doc.createElement('select');
-		themeSelect.className = 'obsidian-reader-settings-select';
+		themeSelect.className = 'open-markdown-clipper-reader-settings-select';
 		themeSelect.dataset.action = 'change-theme';
 
 		const themeOptions: Array<[string, string]> = [
@@ -516,7 +829,7 @@ export class Reader {
 
 		// Theme mode select
 		const themeModeWrapper = doc.createElement('div');
-		themeModeWrapper.className = 'obsidian-reader-settings-select-wrapper';
+		themeModeWrapper.className = 'open-markdown-clipper-reader-settings-select-wrapper';
 
 		const sunIcon = this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
@@ -546,7 +859,7 @@ export class Reader {
 		});
 
 		const themeModeSelect = doc.createElement('select');
-		themeModeSelect.className = 'obsidian-reader-settings-select';
+		themeModeSelect.className = 'open-markdown-clipper-reader-settings-select';
 
 		const modeOptions: Array<[string, string]> = [
 			['auto', 'readerAppearanceAuto'],
@@ -566,7 +879,7 @@ export class Reader {
 
 		// Settings button
 		const settingsBtn = doc.createElement('button');
-		settingsBtn.className = 'obsidian-reader-settings-link-button';
+		settingsBtn.className = 'open-markdown-clipper-reader-settings-link-button';
 		settingsBtn.setAttribute('aria-label', getMessage('readerSettings'));
 		settingsBtn.appendChild(this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
@@ -584,7 +897,7 @@ export class Reader {
 
 		// Font select
 		const fontWrapper = doc.createElement('div');
-		fontWrapper.className = 'obsidian-reader-settings-select-wrapper';
+		fontWrapper.className = 'open-markdown-clipper-reader-settings-select-wrapper';
 		fontWrapper.appendChild(this.createSVG({
 			width: '18', height: '18', viewBox: '0 0 24 24', strokeWidth: '1.75',
 			paths: [
@@ -594,7 +907,7 @@ export class Reader {
 			],
 		}));
 		const fontSelect = doc.createElement('select');
-		fontSelect.className = 'obsidian-reader-settings-select';
+		fontSelect.className = 'open-markdown-clipper-reader-settings-select';
 
 		const sansOption = doc.createElement('option');
 		sansOption.value = '';
@@ -615,25 +928,25 @@ export class Reader {
 		fontWrapper.appendChild(fontSelect);
 
 		const fontNotice = doc.createElement('div');
-		fontNotice.className = 'obsidian-reader-font-notice';
+		fontNotice.className = 'open-markdown-clipper-reader-font-notice';
 		fontNotice.textContent = getMessage('readerFontUnavailable');
 		fontNotice.style.display = 'none';
 		this.fontNotice = fontNotice;
 
 		// Assemble everything
 		const typographyGroup = doc.createElement('div');
-		typographyGroup.className = 'obsidian-reader-settings-typography-group';
+		typographyGroup.className = 'open-markdown-clipper-reader-settings-typography-group';
 		typographyGroup.appendChild(fontGroup);
 		typographyGroup.appendChild(widthGroup);
 		typographyGroup.appendChild(lineHeightGroup);
 		controlsContainer.appendChild(typographyGroup);
 
 		const spacer = doc.createElement('div');
-		spacer.className = 'obsidian-reader-settings-spacer';
+		spacer.className = 'open-markdown-clipper-reader-settings-spacer';
 		controlsContainer.appendChild(spacer);
 
 		const dropdownGroup = doc.createElement('div');
-		dropdownGroup.className = 'obsidian-reader-settings-dropdown-group';
+		dropdownGroup.className = 'open-markdown-clipper-reader-settings-dropdown-group';
 		dropdownGroup.appendChild(themeModeWrapper);
 		dropdownGroup.appendChild(themeWrapper);
 		dropdownGroup.appendChild(fontWrapper);
@@ -641,7 +954,7 @@ export class Reader {
 		controlsContainer.appendChild(dropdownGroup);
 
 		const spacer2 = doc.createElement('div');
-		spacer2.className = 'obsidian-reader-settings-spacer';
+		spacer2.className = 'open-markdown-clipper-reader-settings-spacer';
 		controlsContainer.appendChild(spacer2);
 
 		controlsContainer.appendChild(settingsBtn);
@@ -658,7 +971,7 @@ export class Reader {
 
 		settingsBar.addEventListener('click', (e) => {
 			const target = e.target as HTMLElement;
-			const button = target.closest('.obsidian-reader-settings-button') as HTMLButtonElement;
+			const button = target.closest('.open-markdown-clipper-reader-settings-button') as HTMLButtonElement;
 			if (!button) return;
 
 			const action = button.dataset.action;
@@ -713,7 +1026,7 @@ export class Reader {
 		doc.fonts?.ready?.then(() => this.updateFontNotice(doc, this.settings.defaultFont)).catch(() => {});
 
 		// Notify content script to listen for highlighter button
-		document.dispatchEvent(new CustomEvent('obsidian-reader-init'));
+		document.dispatchEvent(new CustomEvent('open-markdown-clipper-reader-init'));
 		
 	}
 
@@ -890,7 +1203,7 @@ export class Reader {
 		if (!article) return null;
 
 		// Get the existing outline container
-		const outline = doc.querySelector('.obsidian-reader-outline') as HTMLElement;
+		const outline = doc.querySelector('.open-markdown-clipper-reader-outline') as HTMLElement;
 		if (!outline) return null;
 
 		// Find all headings h2-h6, excluding those inside blockquotes
@@ -916,10 +1229,10 @@ export class Reader {
 		const outlineItems = new Map();
 
 		// Add title as first outline item
-		const titleHeading = doc.querySelector('.obsidian-reader-content h1');
+		const titleHeading = doc.querySelector('.open-markdown-clipper-reader-content h1');
 		if (title && titleHeading) {
 			const titleItem = doc.createElement('div');
-			titleItem.className = 'obsidian-reader-outline-item obsidian-reader-outline-h1';
+			titleItem.className = 'open-markdown-clipper-reader-outline-item open-markdown-clipper-reader-outline-h1';
 			titleItem.setAttribute('data-depth', '0');
 			titleItem.textContent = title;
 			titleItem.addEventListener('click', () => {
@@ -962,7 +1275,7 @@ export class Reader {
 			}
 
 			const item = doc.createElement('div');
-			item.className = `obsidian-reader-outline-item obsidian-reader-outline-${heading.tagName.toLowerCase()}`;
+			item.className = `open-markdown-clipper-reader-outline-item open-markdown-clipper-reader-outline-${heading.tagName.toLowerCase()}`;
 			item.setAttribute('data-depth', depth.toString());
 			item.setAttribute('data-heading-id', heading.id);
 			item.textContent = heading.textContent;
@@ -1065,7 +1378,7 @@ export class Reader {
 		const footnotes = article.querySelector('#footnotes');
 		if (footnotes) {
 			const item = doc.createElement('div');
-			item.className = 'obsidian-reader-outline-item';
+			item.className = 'open-markdown-clipper-reader-outline-item';
 			item.setAttribute('data-depth', '0');
 			item.textContent = getMessage('readerFootnotes');
 			
@@ -1079,7 +1392,7 @@ export class Reader {
 		}
 
 		// Populate mobile outline overlay
-		const outlineOverlay = doc.querySelector('.obsidian-reader-outline-overlay') as HTMLElement;
+		const outlineOverlay = doc.querySelector('.open-markdown-clipper-reader-outline-overlay') as HTMLElement;
 		const outlineBtn = doc.querySelector('.nav-btn-outline') as HTMLElement;
 		if (outlineOverlay && outlineBtn) {
 			outlineBtn.classList.remove('is-hidden');
@@ -1091,7 +1404,7 @@ export class Reader {
 				doc.body.style.overflow = '';
 			};
 
-			const outlineItemsList = outline.querySelectorAll('.obsidian-reader-outline-item');
+			const outlineItemsList = outline.querySelectorAll('.open-markdown-clipper-reader-outline-item');
 			const headingEntries = Array.from(outlineItems.entries());
 
 			outlineItemsList.forEach((item, index) => {
@@ -1154,9 +1467,9 @@ export class Reader {
 		}
 		for (const obs of this.outlineMutationObservers) obs.disconnect();
 		this.outlineMutationObservers = [];
-		const outline = doc.querySelector('.obsidian-reader-outline') as HTMLElement;
+		const outline = doc.querySelector('.open-markdown-clipper-reader-outline') as HTMLElement;
 		if (outline) outline.textContent = '';
-		const outlineOverlay = doc.querySelector('.obsidian-reader-outline-overlay') as HTMLElement;
+		const outlineOverlay = doc.querySelector('.open-markdown-clipper-reader-outline-overlay') as HTMLElement;
 		if (outlineOverlay) outlineOverlay.textContent = '';
 
 		// Footnotes
@@ -1181,7 +1494,7 @@ export class Reader {
 			doc.removeEventListener('keydown', this.lightboxKeyHandler);
 			this.lightboxKeyHandler = null;
 		}
-		doc.querySelector('.obsidian-reader-lightbox')?.remove();
+		doc.querySelector('.open-markdown-clipper-reader-lightbox')?.remove();
 
 		// Highlights
 		hl().removeExistingHighlights();
@@ -1407,7 +1720,7 @@ export class Reader {
 			// Replace body with a clone to remove all event listeners.
 			// Skip when the clipper iframe is present — cloning creates a
 			// new iframe element which reloads and loses user edits.
-			if (!doc.getElementById('obsidian-clipper-container')) {
+			if (!doc.getElementById('open-markdown-clipper-container')) {
 				const newBody = doc.body.cloneNode(true);
 				doc.body.parentNode?.replaceChild(newBody, doc.body);
 			}
@@ -1756,7 +2069,7 @@ export class Reader {
 	private static initializeLightbox(doc: Document) {
 		// Create lightbox container
 		this.lightbox = doc.createElement('div');
-		this.lightbox.className = 'obsidian-reader-lightbox theme-dark';
+		this.lightbox.className = 'open-markdown-clipper-reader-lightbox theme-dark';
 		this.lightbox.setAttribute('role', 'dialog');
 		this.lightbox.setAttribute('aria-modal', 'true');
 		// Create lightbox
@@ -1982,6 +2295,7 @@ export class Reader {
 	}
 
 	static async apply(doc: Document) {
+		const destinationRevision = this.destinationReadiness.beginFresh();
 		let resolveViewTransition: (() => void) | undefined;
 		try {
 			await initializeI18n();
@@ -1989,7 +2303,7 @@ export class Reader {
 			this.hasApplied = true;
 
 			// Clipper iframe container
-			const clipperIframeContainer = doc.getElementById('obsidian-clipper-container');
+			const clipperIframeContainer = doc.getElementById('open-markdown-clipper-container');
 
 			// Load saved settings
 			await this.loadSettings();
@@ -2030,7 +2344,7 @@ export class Reader {
 			// Clone document and start Defuddle before the view transition
 			// so content extraction runs during the crossfade animation
 			const docClone = doc.cloneNode(true) as Document;
-			docClone.getElementById('obsidian-clipper-container')?.remove();
+			docClone.getElementById('open-markdown-clipper-container')?.remove();
 			Object.defineProperty(docClone, 'URL', { value: doc.URL, configurable: true });
 			const contentPromise = this.extractContent(docClone);
 
@@ -2083,17 +2397,17 @@ export class Reader {
 			// Remove stylesheet links and style tags, except reader and extension styles
 			const styleElements = head.querySelectorAll('link[rel="stylesheet"], link[as="style"], style');
 			styleElements.forEach(el => {
-				if (el.id === 'obsidian-reader-styles') return;
+				if (el.id === 'open-markdown-clipper-reader-styles') return;
 				// Preserve extension-injected styles (clipper, highlighter)
-				if (el instanceof HTMLStyleElement && el.textContent?.includes('obsidian-clipper')) return;
+				if (el instanceof HTMLStyleElement && el.textContent?.includes('open-markdown-clipper')) return;
 				el.remove();
 			});
 
 			// Re-add reader CSS as a link element after cleanup
 			// The CSS injected by insertCSS lacks the protected id and gets removed above
-			if (!doc.getElementById('obsidian-reader-styles')) {
+			if (!doc.getElementById('open-markdown-clipper-reader-styles')) {
 				const readerLink = doc.createElement('link');
-				readerLink.id = 'obsidian-reader-styles';
+				readerLink.id = 'open-markdown-clipper-reader-styles';
 				readerLink.rel = 'stylesheet';
 				readerLink.href = browser.runtime.getURL('reader.css');
 				doc.head.appendChild(readerLink);
@@ -2133,18 +2447,18 @@ export class Reader {
 
 			// Create main container
 			const readerContainer = doc.createElement('div');
-			readerContainer.className = 'obsidian-reader-container';
+			readerContainer.className = 'open-markdown-clipper-reader-container';
 
 			// Create left sidebar
 			const leftSidebar = doc.createElement('div');
-			leftSidebar.className = 'obsidian-reader-left-sidebar';
+			leftSidebar.className = 'open-markdown-clipper-reader-left-sidebar';
 			const outline = doc.createElement('div');
-			outline.className = 'obsidian-reader-outline';
+			outline.className = 'open-markdown-clipper-reader-outline';
 			leftSidebar.appendChild(outline);
 
 			// Create content area
 			const readerContent = doc.createElement('div');
-			readerContent.className = 'obsidian-reader-content';
+			readerContent.className = 'open-markdown-clipper-reader-content';
 
 			// Create main element
 			main = doc.createElement('main');
@@ -2152,9 +2466,9 @@ export class Reader {
 			// Create article placeholder with loading spinner
 			article = doc.createElement('article');
 			spinner = doc.createElement('div');
-			spinner.className = 'obsidian-reader-loading';
+			spinner.className = 'open-markdown-clipper-reader-loading';
 			const spinnerText = doc.createElement('div');
-			spinnerText.className = 'obsidian-reader-loading-text';
+			spinnerText.className = 'open-markdown-clipper-reader-loading-text';
 			spinnerText.textContent = getMessage('readerLoading');
 			spinner.appendChild(spinnerText);
 			article.appendChild(spinner);
@@ -2164,13 +2478,13 @@ export class Reader {
 
 			// Create footer (hidden until content loads)
 			footer = doc.createElement('div');
-			footer.className = 'obsidian-reader-footer';
+			footer.className = 'open-markdown-clipper-reader-footer';
 			footer.style.display = 'none';
 			readerContent.appendChild(footer);
 
 			// Create right sidebar
 			const rightSidebar = doc.createElement('div');
-			rightSidebar.className = 'obsidian-reader-right-sidebar';
+			rightSidebar.className = 'open-markdown-clipper-reader-right-sidebar';
 
 			// Assemble and display the shell immediately
 			readerContainer.appendChild(leftSidebar);
@@ -2179,11 +2493,9 @@ export class Reader {
 			doc.body.appendChild(readerContainer);
 
 			// Add reader classes and attributes
-			doc.documentElement.classList.add('obsidian-reader-active');
+			doc.documentElement.classList.add('open-markdown-clipper-reader-active');
 
-			// Load the highlighter stylesheet. On a live page (case 2), this
-			// goes through content.js's bridge. On reader.html (case 3), the
-			// local implementation injects the <link> tag directly.
+			// Load the extension-reader highlighter stylesheet.
 			hl().ensureHighlighterCSS();
 
 			// Apply theme mode (sets theme-light/dark), then effective theme
@@ -2199,7 +2511,7 @@ export class Reader {
 
 			if (this.settings.customCss) {
 				const styleEl = doc.createElement('style');
-				styleEl.id = 'obsidian-reader-custom-css';
+				styleEl.id = 'open-markdown-clipper-reader-custom-css';
 				styleEl.textContent = this.settings.customCss;
 				doc.head.appendChild(styleEl);
 			}
@@ -2208,7 +2520,7 @@ export class Reader {
 			this.injectSettingsBar(doc);
 
 			// Re-activate highlighter if it was active before entering Reader
-			if (doc.body.classList.contains('obsidian-highlighter-active')) {
+			if (doc.body.classList.contains('open-markdown-clipper-highlighter-active')) {
 				hl().toggleHighlighterMenu(true);
 			}
 
@@ -2250,7 +2562,10 @@ export class Reader {
 			const { content, title, author, published, domain, extractorType, wordCount, parseTime } = await contentPromise;
 
 			// If reader was toggled off while waiting, abort
-			if (!this.isActive) return;
+			if (!this.isActive) {
+				this.destinationReadiness.fail(destinationRevision);
+				return;
+			}
 
 			// Remove loading spinner
 			spinner.remove();
@@ -2258,6 +2573,7 @@ export class Reader {
 			if (!content) {
 				console.log('Reader', 'Failed to extract content');
 				article.textContent = getMessage('readerError');
+				this.destinationReadiness.fail(destinationRevision);
 				return;
 			}
 
@@ -2357,8 +2673,10 @@ export class Reader {
 			}
 
 			await this.initializeContentFeatures(doc, title);
+			this.destinationReadiness.complete(destinationRevision);
 
 		} catch (e) {
+			this.destinationReadiness.fail(destinationRevision);
 			console.error('Reader', 'Error during apply:', e);
 			if (resolveViewTransition) resolveViewTransition();
 		}
@@ -2366,6 +2684,9 @@ export class Reader {
 
 	static async restore(doc: Document) {
 		if (this.hasApplied) {
+			this.destinationMenuCleanup?.();
+			this.destinationMenuCleanup = null;
+			this.destinationReadiness.deactivate();
 			this.hasApplied = false;
 			this.isActive = false;
 
@@ -2392,10 +2713,10 @@ export class Reader {
 		// Idempotent: if Reader.apply runs again without a page reload (e.g.
 		// SPA navigation where we re-enter reader), don't stack a second
 		// button + three more listeners on the same document.
-		if (doc.querySelector('.obsidian-selection-action')) return;
+		if (doc.querySelector('.open-markdown-clipper-selection-action')) return;
 		const btn = doc.createElement('button');
 		btn.type = 'button';
-		btn.className = 'obsidian-selection-action';
+		btn.className = 'open-markdown-clipper-selection-action';
 		btn.setAttribute('aria-label', getMessage('highlightSelection'));
 		setElementHTML(btn, `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg><span>${getMessage('highlightSelection')}</span>`);
 		btn.style.display = 'none';
@@ -2419,11 +2740,11 @@ export class Reader {
 
 		const update = () => {
 			if (!this.isActive) return hide();
-			if (doc.body.classList.contains('obsidian-highlighter-active')) return hide();
+			if (doc.body.classList.contains('open-markdown-clipper-highlighter-active')) return hide();
 			const sel = doc.getSelection();
 			if (!sel || sel.isCollapsed || sel.rangeCount === 0) return hide();
 			const range = sel.getRangeAt(0);
-			const article = doc.querySelector('.obsidian-reader-content article');
+			const article = doc.querySelector('.open-markdown-clipper-reader-content article');
 			if (!article || !article.contains(range.commonAncestorContainer)) return hide();
 			const rects = range.getClientRects();
 			if (rects.length === 0) return hide();
@@ -2475,20 +2796,18 @@ export class Reader {
 		});
 	}
 
-	// Inject highlighter.css for the standalone reader.html (case 3, no
-	// content.js). On live pages (case 2), hl() routes to content.js's
-	// Promise-cached version instead.
+	// Inject highlighter.css for the extension-origin reader.html document.
 	static ensureHighlighterCSS(doc: Document): void {
-		if (doc.getElementById('obsidian-highlighter-stylesheet')) return;
+		if (doc.getElementById('open-markdown-clipper-highlighter-stylesheet')) return;
 		const link = doc.createElement('link');
-		link.id = 'obsidian-highlighter-stylesheet';
+		link.id = 'open-markdown-clipper-highlighter-stylesheet';
 		link.rel = 'stylesheet';
 		link.href = browser.runtime.getURL('highlighter.css');
 		(doc.head || doc.documentElement).appendChild(link);
 	}
 
 	static toggleHighlighter(doc: Document): void {
-		const willBeActive = !doc.body.classList.contains('obsidian-highlighter-active');
+		const willBeActive = !doc.body.classList.contains('open-markdown-clipper-highlighter-active');
 		hl().toggleHighlighterMenu(willBeActive);
 	}
 
@@ -2508,7 +2827,7 @@ export class Reader {
 	private static initializeFollowLinks(doc: Document): void {
 		if (!this.settings.followLinks) return;
 
-		const article = doc.querySelector('.obsidian-reader-content article');
+		const article = doc.querySelector('.open-markdown-clipper-reader-content article');
 		if (!article) return;
 
 		article.addEventListener('click', (e: Event) => {
@@ -2619,10 +2938,10 @@ export class Reader {
 		}
 
 		// Footer
-		const footer = doc.querySelector('.obsidian-reader-footer') as HTMLElement | null;
+		const footer = doc.querySelector('.open-markdown-clipper-reader-footer') as HTMLElement | null;
 		if (footer) {
 			const footerItems = [
-				'Obsidian Reader',
+				'Open Markdown Clipper',
 				content.wordCount ? new Intl.NumberFormat().format(content.wordCount) + ' words' : '',
 				content.parseTime ? 'parsed in ' + new Intl.NumberFormat().format(content.parseTime) + ' ms' : '',
 			].filter(Boolean);
@@ -2656,7 +2975,7 @@ export class Reader {
 	// Shared between apply() and updateReaderContent().
 	private static async initializeContentFeatures(doc: Document, title?: string): Promise<void> {
 		this.observer = this.generateOutline(doc, title);
-		const leftSidebar = doc.querySelector('.obsidian-reader-left-sidebar') as HTMLElement;
+		const leftSidebar = doc.querySelector('.open-markdown-clipper-reader-left-sidebar') as HTMLElement;
 		if (leftSidebar) {
 			leftSidebar.classList.toggle('is-empty', !this.observer);
 		}
@@ -2691,8 +3010,8 @@ export class Reader {
 
 	// Replace article content in-place for SPA navigation on the reader page.
 	static async updateReaderContent(doc: Document, content: ReaderContent): Promise<void> {
-		const main = doc.querySelector('.obsidian-reader-content main') as HTMLElement | null;
-		if (!main) return;
+		const main = doc.querySelector('.open-markdown-clipper-reader-content main') as HTMLElement | null;
+		if (!main) throw new Error('reader-content-unavailable');
 
 		this.teardownContent(doc);
 		main.textContent = '';
@@ -2729,9 +3048,9 @@ export class Reader {
 
 	// --- Reader page helpers (extension page context) ---
 
-	static async toggleReaderPageIframe(doc: Document): Promise<void> {
-		const containerId = 'obsidian-clipper-container';
-		const iframeId = 'obsidian-clipper-iframe';
+	static async toggleReaderPageIframe(doc: Document): Promise<boolean> {
+		const containerId = 'open-markdown-clipper-container';
+		const iframeId = 'open-markdown-clipper-iframe';
 
 		const existing = doc.getElementById(containerId);
 		if (existing) {
@@ -2742,7 +3061,7 @@ export class Reader {
 				existing.remove();
 				hl().repositionHighlights();
 			}, { once: true });
-			return;
+			return false;
 		}
 
 		const container = doc.createElement('div');
@@ -2772,34 +3091,6 @@ export class Reader {
 		doc.body.appendChild(container);
 		updateSidebarWidth(doc, container);
 		container.addEventListener('animationend', () => hl().repositionHighlights(), { once: true });
-	}
-
-	static copyMarkdownOnReaderPage(doc: Document): void {
-		try {
-			const defuddled = parseForClip(doc);
-			const markdown = createMarkdownContent(defuddled.content, doc.URL);
-			navigator.clipboard.writeText(markdown).catch(() => {
-				const textArea = doc.createElement('textarea');
-				textArea.value = markdown;
-				doc.body.appendChild(textArea);
-				textArea.select();
-				doc.execCommand('copy');
-				doc.body.removeChild(textArea);
-			});
-		} catch (err) {
-			console.error('Failed to copy markdown:', err);
-		}
-	}
-
-	static async saveMarkdownOnReaderPage(doc: Document): Promise<void> {
-		try {
-			const defuddled = parseForClip(doc);
-			const markdown = createMarkdownContent(defuddled.content, doc.URL);
-			const title = defuddled.title || doc.title || 'Untitled';
-			const fileName = title.replace(/[/\\?%*:|"<>]/g, '-');
-			await saveFile({ content: markdown, fileName, mimeType: 'text/markdown' });
-		} catch (err) {
-			console.error('Failed to save markdown:', err);
-		}
+		return true;
 	}
 }

@@ -482,25 +482,25 @@ Tags:
 	describe('Map Filter', () => {
 		test('map extracts property from array of objects', async () => {
 			const ctx = createContext({
-				items: [{ gem: 'obsidian', color: 'black' }, { gem: 'amethyst', color: 'purple' }],
+				items: [{ gem: 'onyx', color: 'black' }, { gem: 'amethyst', color: 'purple' }],
 			});
 			// Use the real filter infrastructure via renderTemplate
 			const output = await renderTemplate(
 				'{{items|map:item => item.gem}}',
 				{ items: JSON.stringify(ctx.variables.items) },
 			);
-			expect(output).toBe('["obsidian","amethyst"]');
+			expect(output).toBe('["onyx","amethyst"]');
 		});
 
 		test('map with object literal expression', async () => {
-			const items = [{ gem: 'obsidian', color: 'black' }, { gem: 'amethyst', color: 'purple' }];
+			const items = [{ gem: 'onyx', color: 'black' }, { gem: 'amethyst', color: 'purple' }];
 			const output = await renderTemplate(
 				'{{items|map:item => ({name: item.gem, color: item.color})}}',
 				{ items: JSON.stringify(items) },
 			);
 			const parsed = JSON.parse(output);
 			expect(parsed).toEqual([
-				{ name: 'obsidian', color: 'black' },
+				{ name: 'onyx', color: 'black' },
 				{ name: 'amethyst', color: 'purple' },
 			]);
 		});

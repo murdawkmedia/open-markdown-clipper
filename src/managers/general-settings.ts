@@ -1,10 +1,8 @@
-import { handleDragStart, handleDragOver, handleDrop, handleDragEnd } from '../utils/drag-and-drop';
-import { initializeIcons } from '../icons/icons';
 import { getCommands } from '../utils/hotkeys';
 import { initializeToggles, updateToggleState, initializeSettingToggle } from '../utils/ui-utils';
-import { generalSettings, loadSettings, saveSettings, setLocalStorage, getLocalStorage } from '../utils/storage-utils';
+import { generalSettings, loadSettings, saveSettings } from '../utils/storage-utils';
 import { detectBrowser } from '../utils/browser-detection';
-import { createElementWithClass, createElementWithHTML } from '../utils/dom-utils';
+import { createElementWithClass } from '../utils/dom-utils';
 import { createDefaultTemplate, getTemplates, saveTemplateSettings } from '../managers/template-manager';
 import { updateTemplateList, showTemplateEditor } from '../managers/template-ui';
 import { exportAllSettings, importAllSettings } from '../utils/import-export';
@@ -17,66 +15,34 @@ import { createUsageChart, aggregateUsageData } from '../utils/charts';
 import { getClipHistory } from '../utils/storage-utils';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
-import { showModal, hideModal } from '../utils/modal-utils';
+import { DestinationKind } from '../destinations/types';
+import { probeLocalHttpEndpoint } from '../destinations/local-http';
+import {
+	clearLocalHttpToken,
+	getLocalHttpToken,
+	hasLocalHttpToken,
+	setLocalHttpToken,
+} from '../utils/destination-secrets';
+import {
+	createDataConsentController,
+	DataConsentController,
+	DataConsentPermissionsApi,
+	isTransmittingDestination,
+} from '../utils/data-consent';
 
 dayjs.extend(weekOfYear);
 
-const STORE_URLS = {
-	chrome: 'https://chromewebstore.google.com/detail/obsidian-web-clipper/cnjifjpddelmedmihgijeibhnjfabmlf',
-	firefox: 'https://addons.mozilla.org/en-US/firefox/addon/web-clipper-obsidian/',
-	safari: 'https://apps.apple.com/us/app/obsidian-web-clipper/id6720708363',
-	edge: 'https://microsoftedge.microsoft.com/addons/detail/obsidian-web-clipper/eigdjhmgnaaeaonimdklocfekkaanfme'
-};
+const DESTINATION_KINDS: readonly DestinationKind[] = [
+	'clipboard',
+	'download',
+	'custom-uri',
+	'local-http',
+];
 
-export function updateVaultList(): void {
-	const vaultList = document.getElementById('vault-list') as HTMLUListElement;
-	if (!vaultList) return;
-
-	// Clear existing vaults
-	vaultList.textContent = '';
-	generalSettings.vaults.forEach((vault, index) => {
-		const li = document.createElement('li');
-		li.dataset.index = index.toString();
-		li.draggable = true;
-
-		const dragHandle = createElementWithClass('div', 'drag-handle');
-		dragHandle.appendChild(createElementWithHTML('i', '', { 'data-lucide': 'grip-vertical' }));
-		li.appendChild(dragHandle);
-
-		const span = document.createElement('span');
-		span.textContent = vault;
-		li.appendChild(span);
-
-		const removeBtn = createElementWithClass('button', 'setting-item-list-remove clickable-icon');
-		removeBtn.setAttribute('type', 'button');
-		removeBtn.setAttribute('aria-label', getMessage('removeVault'));
-		removeBtn.appendChild(createElementWithHTML('i', '', { 'data-lucide': 'trash-2' }));
-		li.appendChild(removeBtn);
-
-		li.addEventListener('dragstart', handleDragStart);
-		li.addEventListener('dragover', handleDragOver);
-		li.addEventListener('drop', handleDrop);
-		li.addEventListener('dragend', handleDragEnd);
-		removeBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			removeVault(index);
-		});
-		vaultList.appendChild(li);
-	});
-
-	initializeIcons(vaultList);
-}
-
-export function addVault(vault: string): void {
-	generalSettings.vaults.push(vault);
-	saveSettings();
-	updateVaultList();
-}
-
-export function removeVault(index: number): void {
-	generalSettings.vaults.splice(index, 1);
-	saveSettings();
-	updateVaultList();
+export interface DestinationSettingsOptions {
+	readonly fetchImpl?: typeof fetch;
+	readonly signal?: AbortSignal;
+	readonly dataConsent?: DataConsentController;
 }
 
 export async function setShortcutInstructions() {
@@ -168,6 +134,257 @@ async function initializeVersionDisplay(): Promise<void> {
 	}
 }
 
+function isDestinationKind(value: string): value is DestinationKind {
+	return DESTINATION_KINDS.includes(value as DestinationKind);
+}
+
+function setDestinationPanelVisibility(
+	panel: HTMLElement,
+	visible: boolean,
+): void {
+	panel.hidden = !visible;
+	panel.setAttribute('aria-hidden', String(!visible));
+}
+
+export async function initializeDestinationSettings(
+	options: DestinationSettingsOptions = {},
+): Promise<void> {
+	const browserPermissions = (
+		browser as unknown as { permissions?: DataConsentPermissionsApi }
+	).permissions;
+	const dataConsent = options.dataConsent ?? createDataConsentController(
+		browserPermissions ?? {
+			getAll: async () => ({}),
+			request: async () => false,
+		},
+	);
+	const [settings] = await Promise.all([
+		loadSettings(),
+		dataConsent.prime().catch(() => 'unknown' as const),
+	]);
+	const destinationSelect = document.getElementById('default-destination') as HTMLSelectElement | null;
+	const customUriInput = document.getElementById('custom-uri-template') as HTMLInputElement | null;
+	const localHttpEndpointInput = document.getElementById('local-http-endpoint') as HTMLInputElement | null;
+	const localHttpTokenInput = document.getElementById('local-http-token') as HTMLInputElement | null;
+	const customUriPanel = document.getElementById('custom-uri-settings');
+	const localHttpPanel = document.getElementById('local-http-settings');
+	const saveTokenButton = document.getElementById('save-local-http-token') as HTMLButtonElement | null;
+	const clearTokenButton = document.getElementById('clear-local-http-token') as HTMLButtonElement | null;
+	const testConnectionButton = document.getElementById('test-local-http') as HTMLButtonElement | null;
+	const status = document.getElementById('destination-status');
+
+	if (
+		!destinationSelect
+		|| !customUriInput
+		|| !localHttpEndpointInput
+		|| !localHttpTokenInput
+		|| !customUriPanel
+		|| !localHttpPanel
+		|| !saveTokenButton
+		|| !clearTokenButton
+		|| !testConnectionButton
+		|| !status
+	) {
+		return;
+	}
+
+	const localOperationControls: Array<HTMLInputElement | HTMLButtonElement> = [
+		localHttpEndpointInput,
+		localHttpTokenInput,
+		saveTokenButton,
+		clearTokenButton,
+		testConnectionButton,
+	];
+	let destinationSaveQueue: Promise<void> = Promise.resolve();
+	let acceptedDestination = settings.defaultDestination;
+	let destinationChangeRevision = 0;
+	let localOperationBusy = false;
+	let activeLocalOperation = 0;
+
+	const updatePanels = (): void => {
+		setDestinationPanelVisibility(customUriPanel, destinationSelect.value === 'custom-uri');
+		setDestinationPanelVisibility(localHttpPanel, destinationSelect.value === 'local-http');
+	};
+	const setStatus = (messageKey: string): void => {
+		status.textContent = getMessage(messageKey);
+	};
+	const updateTokenState = async (): Promise<void> => {
+		const configured = await hasLocalHttpToken();
+		localHttpTokenInput.placeholder = getMessage(
+			configured ? 'localHttpTokenConfigured' : 'localHttpTokenNotConfigured',
+		);
+		localHttpTokenInput.value = '';
+	};
+	const enqueueDestinationSave = (update: Partial<Settings>): Promise<void> => {
+		const queuedSave = destinationSaveQueue
+			.catch(() => undefined)
+			.then(() => saveSettings(update));
+		destinationSaveQueue = queuedSave;
+		return queuedSave;
+	};
+	const setLocalOperationBusy = (busy: boolean): void => {
+		localOperationControls.forEach((control) => {
+			control.disabled = busy;
+		});
+	};
+	const runLocalOperation = (
+		operation: () => Promise<void>,
+		successMessage: string,
+		failureMessage: string,
+		pendingMessage?: string,
+	): void => {
+		if (localOperationBusy) return;
+		localOperationBusy = true;
+		const operationId = ++activeLocalOperation;
+		setLocalOperationBusy(true);
+		if (pendingMessage) setStatus(pendingMessage);
+
+		void (async () => {
+			try {
+				await operation();
+				if (activeLocalOperation === operationId) setStatus(successMessage);
+			} catch {
+				if (activeLocalOperation === operationId) setStatus(failureMessage);
+			} finally {
+				if (activeLocalOperation === operationId) {
+					localOperationBusy = false;
+					setLocalOperationBusy(false);
+				}
+			}
+		})();
+	};
+
+	destinationSelect.value = settings.defaultDestination;
+	customUriInput.value = settings.customUriTemplate;
+	localHttpEndpointInput.value = settings.localHttpEndpoint;
+	updatePanels();
+	await updateTokenState();
+
+	destinationSelect.addEventListener('change', () => {
+		const revision = ++destinationChangeRevision;
+		updatePanels();
+		const destination = destinationSelect.value;
+		if (!isDestinationKind(destination)) {
+			destinationSelect.value = acceptedDestination;
+			updatePanels();
+			setStatus('destinationSettingsSaveFailed');
+			return;
+		}
+
+		const saveSelectedDestination = async (): Promise<void> => {
+			await enqueueDestinationSave({ defaultDestination: destination });
+			if (revision === destinationChangeRevision) {
+				acceptedDestination = destination;
+			}
+		};
+		const revertSelection = (): void => {
+			if (revision !== destinationChangeRevision) return;
+			destinationSelect.value = acceptedDestination;
+			updatePanels();
+			setStatus('destinationSettingsSaveFailed');
+		};
+
+		if (!isTransmittingDestination(destination)) {
+			void saveSelectedDestination().catch(revertSelection);
+			return;
+		}
+
+		let requested: Promise<boolean>;
+		try {
+			// Keep this call in the synchronous change-event stack so Firefox may
+			// display its built-in optional-data prompt.
+			requested = dataConsent.requestFromUserGesture(destination);
+		} catch {
+			revertSelection();
+			return;
+		}
+		void requested.then(async (granted) => {
+			if (
+				revision !== destinationChangeRevision
+				|| granted !== true
+				|| await dataConsent.hasConsent(destination) !== true
+			) {
+				revertSelection();
+				return;
+			}
+			await saveSelectedDestination();
+		}).catch(revertSelection);
+	});
+
+	customUriInput.addEventListener('change', () => {
+		const customUriTemplate = customUriInput.value;
+		void enqueueDestinationSave({ customUriTemplate }).catch(() => {
+			setStatus('destinationSettingsSaveFailed');
+		});
+	});
+
+	localHttpEndpointInput.addEventListener('change', () => {
+		const localHttpEndpoint = localHttpEndpointInput.value;
+		void enqueueDestinationSave({ localHttpEndpoint }).catch(() => {
+			setStatus('destinationSettingsSaveFailed');
+		});
+	});
+
+	saveTokenButton.addEventListener('click', () => {
+		const token = localHttpTokenInput.value;
+		runLocalOperation(
+			async () => {
+				await setLocalHttpToken(token);
+				await updateTokenState();
+			},
+			'localHttpTokenSaved',
+			'localHttpTokenSaveFailed',
+		);
+	});
+
+	clearTokenButton.addEventListener('click', () => {
+		runLocalOperation(
+			async () => {
+				await clearLocalHttpToken();
+				await updateTokenState();
+			},
+			'localHttpTokenCleared',
+			'localHttpTokenClearFailed',
+		);
+	});
+
+	testConnectionButton.addEventListener('click', () => {
+		if (localOperationBusy) return;
+		let requested: Promise<boolean>;
+		try {
+			// This must be requested directly in the click gesture, before token
+			// access or a network probe begins.
+			requested = dataConsent.requestFromUserGesture('local-http');
+		} catch {
+			setStatus('localHttpConnectionFailed');
+			return;
+		}
+		const endpoint = localHttpEndpointInput.value;
+		runLocalOperation(
+			async () => {
+				if (
+					await requested !== true
+					|| await dataConsent.hasConsent('local-http') !== true
+				) {
+					throw new Error('destination-delivery-failed');
+				}
+				const token = await getLocalHttpToken();
+				if (await dataConsent.hasConsent('local-http') !== true) {
+					throw new Error('destination-delivery-failed');
+				}
+				await probeLocalHttpEndpoint({
+					endpoint,
+					token,
+					fetchImpl: options.fetchImpl,
+				}, options.signal);
+			},
+			'localHttpConnectionSucceeded',
+			'localHttpConnectionFailed',
+			'localHttpConnectionTesting',
+		);
+	});
+}
+
 export function initializeGeneralSettings(): void {
 	loadSettings().then(async () => {
 		await setupLanguageAndDirection();
@@ -175,48 +392,9 @@ export function initializeGeneralSettings(): void {
 		// Add version check initialization
 		await initializeVersionDisplay();
 
-		// Get clip history and ratings
-		const history = await getClipHistory();
-		const totalClips = history.length;
-		const existingRatings = await getLocalStorage('ratings') || [];
-
-		// Show rating section only total clips >= 20 and no previous ratings
-		const rateExtensionSection = document.getElementById('rate-extension');
-		if (rateExtensionSection && totalClips >= 20 && existingRatings.length === 0) {
-			rateExtensionSection.classList.remove('is-hidden');
-		}
-
-		if (totalClips >= 20 && existingRatings.length === 0) {
-			const starRating = document.querySelector('.star-rating');
-			if (starRating) {
-				const stars = starRating.querySelectorAll('.star');
-				stars.forEach(star => {
-					star.addEventListener('click', async () => {
-						const rating = parseInt(star.getAttribute('data-rating') || '0');
-						stars.forEach(s => {
-							if (parseInt(s.getAttribute('data-rating') || '0') <= rating) {
-								s.classList.add('is-active');
-							} else {
-								s.classList.remove('is-active');
-							}
-						});
-						await handleRating(rating);
-						
-						// Hide the rating section after rating
-						if (rateExtensionSection) {
-							rateExtensionSection.style.display = 'none';
-						}
-					});
-				});
-			}
-		}
-
-		updateVaultList();
+		await initializeDestinationSettings();
 		initializeShowMoreActionsToggle();
 		initializeBetaFeaturesToggle();
-		initializeLegacyModeToggle();
-		initializeSilentOpenToggle();
-		initializeVaultInput();
 		initializeOpenBehaviorDropdown();
 		initializeKeyboardShortcuts();
 		initializeToggles();
@@ -226,33 +404,30 @@ export function initializeGeneralSettings(): void {
 		initializeExportImportAllSettingsButtons();
 		initializeHighlighterSettings();
 		initializeExportHighlightsButton();
-		initializeSaveBehaviorDropdown();
 		await initializeUsageChart();
-
-		// Initialize feedback modal close button
-		const feedbackModal = document.getElementById('feedback-modal');
-		const feedbackCloseBtn = feedbackModal?.querySelector('.feedback-close-btn');
-		if (feedbackCloseBtn) {
-			feedbackCloseBtn.addEventListener('click', () => hideModal(feedbackModal));
-		}
 	});
 }
 
-function initializeAutoSave(): void {
+export function initializeAutoSave(): void {
 	const generalSettingsForm = document.getElementById('general-settings-form');
-	if (generalSettingsForm) {
-		// Listen for both input and change events
-		generalSettingsForm.addEventListener('input', debounce(saveSettingsFromForm, 500));
-		generalSettingsForm.addEventListener('change', debounce(saveSettingsFromForm, 500));
-	}
+	if (!generalSettingsForm) return;
+
+	const persistGeneralSettings = debounce(() => {
+		void saveSettingsFromForm().catch(() => undefined);
+	}, 500);
+	const handleFormEvent = (event: Event): void => {
+		const target = event.target;
+		if (target instanceof Element && target.closest('#destination-settings-group')) return;
+		persistGeneralSettings();
+	};
+	generalSettingsForm.addEventListener('input', handleFormEvent);
+	generalSettingsForm.addEventListener('change', handleFormEvent);
 }
 
-function saveSettingsFromForm(): void {
+function saveSettingsFromForm(): Promise<void> {
 	const openBehaviorDropdown = document.getElementById('open-behavior-dropdown') as HTMLSelectElement;
 	const showMoreActionsToggle = document.getElementById('show-more-actions-toggle') as HTMLInputElement;
 	const betaFeaturesToggle = document.getElementById('beta-features-toggle') as HTMLInputElement;
-	const legacyModeToggle = document.getElementById('legacy-mode-toggle') as HTMLInputElement;
-	const silentOpenToggle = document.getElementById('silent-open-toggle') as HTMLInputElement;
 	const highlighterToggle = document.getElementById('highlighter-toggle') as HTMLInputElement;
 	const alwaysShowHighlightsToggle = document.getElementById('highlighter-visibility') as HTMLInputElement;
 	const highlightBehaviorSelect = document.getElementById('highlighter-behavior') as HTMLSelectElement;
@@ -262,36 +437,18 @@ function saveSettingsFromForm(): void {
 		openBehavior: (openBehaviorDropdown?.value as Settings['openBehavior']) ?? generalSettings.openBehavior,
 		showMoreActionsButton: showMoreActionsToggle?.checked ?? generalSettings.showMoreActionsButton,
 		betaFeatures: betaFeaturesToggle?.checked ?? generalSettings.betaFeatures,
-		legacyMode: legacyModeToggle?.checked ?? generalSettings.legacyMode,
-		silentOpen: silentOpenToggle?.checked ?? generalSettings.silentOpen,
 		highlighterEnabled: highlighterToggle?.checked ?? generalSettings.highlighterEnabled,
 		alwaysShowHighlights: alwaysShowHighlightsToggle?.checked ?? generalSettings.alwaysShowHighlights,
 		highlightBehavior: highlightBehaviorSelect?.value ?? generalSettings.highlightBehavior
 	};
 
-	saveSettings(updatedSettings);
+	return saveSettings(updatedSettings);
 }
 
 function initializeShowMoreActionsToggle(): void {
 	initializeSettingToggle('show-more-actions-toggle', generalSettings.showMoreActionsButton, (checked) => {
 		saveSettings({ ...generalSettings, showMoreActionsButton: checked });
 	});
-}
-
-function initializeVaultInput(): void {
-	const vaultInput = document.getElementById('vault-input') as HTMLInputElement;
-	if (vaultInput) {
-		vaultInput.addEventListener('keypress', (e) => {
-			if (e.key === 'Enter') {
-				e.preventDefault();
-				const newVault = vaultInput.value.trim();
-				if (newVault) {
-					addVault(newVault);
-					vaultInput.value = '';
-				}
-			}
-		});
-	}
 }
 
 async function initializeKeyboardShortcuts(): Promise<void> {
@@ -332,18 +489,6 @@ function initializeBetaFeaturesToggle(): void {
 	});
 }
 
-function initializeLegacyModeToggle(): void {
-	initializeSettingToggle('legacy-mode-toggle', generalSettings.legacyMode, (checked) => {
-		saveSettings({ ...generalSettings, legacyMode: checked });
-	});
-}
-
-function initializeSilentOpenToggle(): void {
-	initializeSettingToggle('silent-open-toggle', generalSettings.silentOpen, (checked) => {
-		saveSettings({ ...generalSettings, silentOpen: checked });
-	});
-}
-
 function initializeOpenBehaviorDropdown(): void {
 	initializeSettingDropdown(
 		'open-behavior-dropdown',
@@ -359,17 +504,6 @@ function initializeResetDefaultTemplateButton(): void {
 	if (resetDefaultTemplateBtn) {
 		resetDefaultTemplateBtn.addEventListener('click', resetDefaultTemplate);
 	}
-}
-
-function initializeSaveBehaviorDropdown(): void {
-    const dropdown = document.getElementById('save-behavior-dropdown') as HTMLSelectElement;
-    if (!dropdown) return;
-
-    dropdown.value = generalSettings.saveBehavior;
-    dropdown.addEventListener('change', () => {
-        const newValue = dropdown.value as 'addToObsidian' | 'copyToClipboard' | 'saveFile';
-        saveSettings({ saveBehavior: newValue });
-    });
 }
 
 export function resetDefaultTemplate(): void {
@@ -453,52 +587,6 @@ async function initializeUsageChart(): Promise<void> {
 	// Update when any selector changes
 	periodSelect.addEventListener('change', updateChart);
 	aggregationSelect.addEventListener('change', updateChart);
-}
-
-async function handleRating(rating: number) {
-	// Get existing ratings from storage
-	const existingRatings = await getLocalStorage('ratings') || [];
-	
-	// Add new rating
-	const newRating = {
-		rating,
-		date: new Date().toISOString()
-	};
-	
-	// Update both storage and generalSettings
-	const updatedRatings = [...existingRatings, newRating];
-	generalSettings.ratings = updatedRatings;
-	
-	// Save to storage
-	await setLocalStorage('ratings', updatedRatings);
-	await saveSettings();
-
-	if (rating >= 4) {
-		// Redirect to appropriate store
-		const browser = await detectBrowser();
-		let storeUrl = STORE_URLS.chrome; // Default to Chrome store
-
-		switch (browser) {
-			case 'firefox':
-			case 'firefox-mobile':
-				storeUrl = STORE_URLS.firefox;
-				break;
-			case 'safari':
-			case 'mobile-safari':
-			case 'ipad-os':
-				storeUrl = STORE_URLS.safari;
-				break;
-			case 'edge':
-				storeUrl = STORE_URLS.edge;
-				break;
-		}
-
-		window.open(storeUrl, '_blank');
-	} else {
-		// Show feedback modal for ratings < 4
-		const modal = document.getElementById('feedback-modal');
-		showModal(modal);
-	}
 }
 
 function initializeSettingDropdown(

@@ -7,21 +7,12 @@ import type { Settings } from '../types/types';
 export default {} as any;
 
 export const generalSettings: Settings = {
-	vaults: [],
 	betaFeatures: false,
-	legacyMode: false,
-	silentOpen: false,
 	openBehavior: 'popup',
 	highlighterEnabled: false,
 	alwaysShowHighlights: false,
 	highlightBehavior: 'no-highlights',
 	showMoreActionsButton: false,
-	interpreterModel: '',
-	models: [],
-	providers: [],
-	interpreterEnabled: false,
-	interpreterAutoRun: false,
-	defaultPromptContext: '',
 	propertyTypes: [],
 	readerSettings: {
 		fontSize: 16,
@@ -41,14 +32,16 @@ export const generalSettings: Settings = {
 		customCss: '',
 	},
 	stats: {
-		addToObsidian: 0,
-		saveFile: 0,
-		copyToClipboard: 0,
+		clipboard: 0,
+		download: 0,
+		'custom-uri': 0,
+		'local-http': 0,
 		share: 0,
 	},
-	history: [],
 	ratings: [],
-	saveBehavior: 'addToObsidian',
+	defaultDestination: 'download',
+	customUriTemplate: '',
+	localHttpEndpoint: '',
 };
 
 export const loadSettings = async () => {};

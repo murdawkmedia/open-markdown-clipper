@@ -1,10 +1,11 @@
 {
 	"manifest_version": 3,
 	"default_locale": "en",
-	"name": "Obsidian Web Clipper",
-	"homepage_url": "https://obsidian.md/",
-	"version": "1.7.0",
-	"description": "Save and highlight web pages in a private and durable format that you can access offline. The official extension for Obsidian.",
+	"name": "Open Markdown Clipper",
+	"homepage_url": "https://github.com/murdawkmedia/open-markdown-clipper",
+	"version": "0.1.0",
+	"minimum_chrome_version": "127",
+	"description": "Capture web pages as durable Markdown and deliver them to local destinations.",
 	"permissions": [
 		"activeTab",
 		"clipboardWrite",
@@ -46,7 +47,7 @@
 	],
 	"web_accessible_resources": [
 		{
-			"resources": ["reader.css", "reader-script.js", "browser-polyfill.min.js", "style.css", "side-panel.html", "flatten-shadow-dom.js", "highlighter.css"],
+			"resources": ["reader.css", "browser-polyfill.min.js", "style.css", "flatten-shadow-dom.js", "highlighter.css", "icons/icon16.png"],
 			"extension_ids": ["*"],
 			"matches": [ "*://*/*" ]
 		}
@@ -57,8 +58,8 @@
 	"commands": {
 		"_execute_action": {
 			"suggested_key": {
-				"default": "Ctrl+Shift+O",
-				"mac": "Command+Shift+O"
+				"default": "Alt+Shift+M",
+				"mac": "Alt+Shift+M"
 			},
 			"description": "__MSG_commandOpenClipper__"
 		},

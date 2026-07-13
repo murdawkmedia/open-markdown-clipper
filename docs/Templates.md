@@ -2,7 +2,7 @@
 permalink: web-clipper/templates
 description: Learn to create templates that capture and organize web page metadata automatically with Web Clipper.
 ---
-[[Introduction to Obsidian Web Clipper|Web Clipper]] allows you to create templates that automatically capture and organize metadata from web pages. Example templates are available in the [clipper-templates repo](https://github.com/kepano/clipper-templates). 
+[[Introduction to Open Markdown Clipper|Web Clipper]] allows you to create templates that automatically capture and organize metadata from web pages. Example templates are available in the [clipper-templates repo](https://github.com/kepano/clipper-templates).
 
 ## Create or edit a template
 
@@ -24,14 +24,6 @@ To export a template click **Export** in the top right. This will download the t
 
 ## Template settings
 
-### Behavior
-
-Define how content from Web Clipper will be added to Obsidian:
-
-- **Create a new note**
-- **Add to an existing note**, at the top or bottom
-- **Add to daily note**, at the top or bottom (requires the [[daily notes]] plugin to be active)
-
 ### Automatically trigger a template
 
 Template triggers allow you to automatically select a template based on the current page URL or [schema.org](https://schema.org/) data. You can define multiple rules for each template, separated by a new line.
@@ -42,7 +34,7 @@ The first match in your template list determines which template is used. You can
 
 Simple matching triggers a template if the current page URL *starts with* the given pattern. For example:
 
-- `https://obsidian.md` will match any URL that starts with this text.
+- `https://example.com/articles/` will match any URL that starts with this text.
 
 #### Regular expression matching
 
@@ -59,7 +51,3 @@ You can trigger templates based on [schema.org](https://schema.org/) data presen
 - `schema:@Recipe.name=Cookie` will match pages where `@Recipe.name` is "Cookie".
 
 Schema.org values can also be used to [[Variables#Schema.org variables|pre-populate data in templates]].
-
-### Interpreter context
-
-When [[Interpret web pages|Interpreter]] is enabled, you can use [[Variables#Prompt variables|prompt variables]] to extract page content with natural language. For each template you can define the [[Interpret web pages#Context|context]] that Interpreter has access too.

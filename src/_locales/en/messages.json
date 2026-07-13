@@ -2,26 +2,8 @@
 	"activity": {
 		"message": "Activity"
 	},
-	"addModel": {
-		"message": "+ Add model"
-	},
-	"addModelTitle": {
-		"message": "Add model"
-	},
 	"addProperty": {
 		"message": "+ Add property"
-	},
-	"addProvider": {
-		"message": "+ Add provider"
-	},
-	"addProviderTitle": {
-		"message": "Add provider"
-	},
-	"addToObsidian": {
-		"message": "Add to Obsidian"
-	},
-	"addVaultPlaceholder": {
-		"message": "Press enter to add a vault"
 	},
 	"advanced": {
 		"message": "Advanced"
@@ -41,23 +23,11 @@
 	"alwaysShowHighlightsDescription": {
 		"message": "Display your saved highlights when you load a page. Turn off to only display highlights when highlighter mode is activated."
 	},
-	"apiKeyMissing": {
-		"message": "No API key"
-	},
-	"apiKeysWarning": {
-		"message": "By using an external provider you agree to their terms and privacy policy. Interpreter requests are sent directly to the provider you choose. Obsidian does not gather or store any data about your requests."
-	},
 	"appendToDaily": {
 		"message": "Add to daily note, at the bottom"
 	},
 	"appendToExisting": {
 		"message": "Add to an existing note, at the bottom"
-	},
-	"autoRunInterpreter": {
-		"message": "Automatically run"
-	},
-	"autoRunInterpreterDescription": {
-		"message": "Run prompt variables immediately if the template contains any. This will consume API credits with your model provider. Turn off if you only want to run interpreter manually."
 	},
 	"behavior": {
 		"message": "Behavior"
@@ -73,9 +43,6 @@
 	},
 	"cancel": {
 		"message": "Cancel"
-	},
-	"cannotDeleteProvider": {
-		"message": "Cannot delete provider \"$1\" because it is being used by $2 model(s)."
 	},
 	"changelog": {
 		"message": "Changelog"
@@ -96,7 +63,7 @@
 		"message": "Clip behavior"
 	},
 	"clipBehaviorDescription": {
-		"message": "Choose how highlighted content is saved to Obsidian. Defines the $strong_start${{content}}$strong_end$ variable.",
+		"message": "Choose how highlighted content is included in the Markdown clip. Defines the $strong_start${{content}}$strong_end$ variable.",
 		"placeholders": {
 			"strong_end": {
 				"content": "</strong>"
@@ -106,19 +73,14 @@
 			}
 		}
 	},
-	"clipboardError": {
-		"message": "Obsidian is not able to access your clipboard. Try the troubleshooting instructions here: $1",
-		"placeholders": {
-			"1": {
-				"content": "$1"
-			}
-		}
-	},
 	"close": {
 		"message": "Close"
 	},
+	"closeReaderPanel": {
+		"message": "Close Reader panel"
+	},
 	"commandOpenClipper": {
-		"message": "Open Obsidian Clipper"
+		"message": "Open Markdown Clipper"
 	},
 	"commandQuickClip": {
 		"message": "Quick clip"
@@ -147,17 +109,101 @@
 	"createNewNote": {
 		"message": "Create new note"
 	},
-	"custom": {
-		"message": "Custom"
-	},
 	"dailyNoteFormat": {
 		"message": "Daily note format (e.g., YYYY-MM-DD)"
 	},
-	"defaultInterpreterContext": {
-		"message": "Default interpreter context"
+	"destination": {
+		"message": "Destination"
 	},
-	"defaultInterpreterContextDescription": {
-		"message": "Override the context used to interpret prompt variables. Variables can be used here."
+	"defaultDestination": {
+		"message": "Default destination"
+	},
+	"defaultDestinationDescription": {
+		"message": "Choose where finished Markdown is delivered."
+	},
+	"clipboardDestination": {
+		"message": "Clipboard"
+	},
+	"downloadDestination": {
+		"message": "Markdown download"
+	},
+	"customUriDestination": {
+		"message": "Custom URI"
+	},
+	"customUriTemplate": {
+		"message": "Custom URI template"
+	},
+	"customUriTemplateDescription": {
+		"message": "Use {title} and {sourceUrl}. Markdown is copied to the clipboard before the URI opens. This setting is synchronized and included in settings exports. Never put secrets here."
+	},
+	"localHttpDestination": {
+		"message": "Local HTTP"
+	},
+	"destinationDeliveryFailed": {
+		"message": "Could not deliver this capture. Copy or download it instead."
+	},
+	"localHttpOutcomeUnknown": {
+		"message": "Delivery result is unknown. Check the receiver before retrying."
+	},
+	"localHttpEndpoint": {
+		"message": "Local HTTP endpoint"
+	},
+	"localHttpEndpointDescription": {
+		"message": "Use a literal loopback address such as http://127.0.0.1:8765/captures. This setting is synchronized and included in settings exports. Never put secrets here."
+	},
+	"localHttpToken": {
+		"message": "Access token"
+	},
+	"localHttpTokenDescription": {
+		"message": "Stored only in this browser profile and excluded from settings sync and exports."
+	},
+	"localHttpTokenConfigured": {
+		"message": "Configured locally"
+	},
+	"localHttpTokenNotConfigured": {
+		"message": "Not configured"
+	},
+	"saveLocalHttpToken": {
+		"message": "Save access token"
+	},
+	"saveLocalHttpTokenLabel": {
+		"message": "Token storage"
+	},
+	"clearLocalHttpToken": {
+		"message": "Clear access token"
+	},
+	"clearLocalHttpTokenLabel": {
+		"message": "Saved token"
+	},
+	"testLocalHttp": {
+		"message": "Test connection"
+	},
+	"testLocalHttpLabel": {
+		"message": "Connection check"
+	},
+	"destinationSettingsSaveFailed": {
+		"message": "Could not save destination settings."
+	},
+	"localHttpTokenSaved": {
+		"message": "Access token saved locally."
+	},
+	"localHttpTokenSaveFailed": {
+		"message": "Could not save the access token. Use 16 to 512 visible characters without spaces."
+	},
+	"localHttpTokenCleared": {
+		"message": "Access token cleared."
+	},
+	"localHttpTokenClearFailed": {
+		"message": "Could not clear the access token."
+	},
+	"localHttpConnectionTesting": {
+		"message": "Testing the local connection…"
+	},
+	"localHttpConnectionSucceeded": {
+		"message": "Connection succeeded."
+	},
+	"localHttpConnectionFailed": {
+		"message": "Connection failed. Check the endpoint and access token."
 	},
 	"defaultTemplateName": {
 		"message": "Default"
@@ -174,20 +220,11 @@
 	"deleteHighlightsForPage": {
 		"message": "Delete all highlights for this page?"
 	},
-	"deleteModelConfirm": {
-		"message": "Are you sure you want to delete this model?"
-	},
-	"deleteProviderConfirm": {
-		"message": "Are you sure you want to delete this provider?"
-	},
 	"disableHighlighter": {
 		"message": "Turn off highlighter"
 	},
 	"disableReader": {
 		"message": "Turn off reader"
-	},
-	"done": {
-		"message": "Done"
 	},
 	"dragAndDropFile": {
 		"message": "Drag and drop file here"
@@ -195,63 +232,20 @@
 	"duplicate": {
 		"message": "Duplicate"
 	},
-	"earlyAccessDescription": {
-		"message": "Use features that require the latest $link_start$early access version$link_end$ of Obsidian. Currently requires Obsidian 1.7.2 or later.",
-		"placeholders": {
-			"link_end": {
-				"content": "</a>"
-			},
-			"link_start": {
-				"content": "<a href=\"https://help.obsidian.md/Obsidian/Early+access+versions\" target=\"_blank\">"
-			}
-		}
-	},
 	"earlyAccessFeatures": {
 		"message": "Early access features"
 	},
 	"edit": {
 		"message": "Edit"
 	},
-	"editModel": {
-		"message": "Edit model"
-	},
-	"editProvider": {
-		"message": "Edit provider"
-	},
 	"editTemplate": {
 		"message": "Edit template"
 	},
-	"embedded": {
-		"message": "Embedded"
-	},
 	"enableHighlighterDescription": {
-		"message": "Highlight content on web pages that you can save to Obsidian."
-	},
-	"enableInterpreter": {
-		"message": "Enable interpreter"
-	},
-	"enableInterpreterDescription": {
-		"message": "Use natural language to extract data from pages. For example, you can use the template syntax $strong_start${{\"a summary of the page\"}}$strong_end$. Requires an API key or custom model configured below.  $link_start$Learn more$link_end$.",
-		"placeholders": {
-			"link_end": {
-				"content": "</a>"
-			},
-			"link_start": {
-				"content": "<a href=\"https://help.obsidian.md/web-clipper/interpreter\" target=\"_blank\">"
-			},
-			"strong_end": {
-				"content": "</strong>"
-			},
-			"strong_start": {
-				"content": "<strong>"
-			}
-		}
+		"message": "Highlight content on web pages and include it in your Markdown clips."
 	},
 	"enableReader": {
 		"message": "Open reading view"
-	},
-	"error": {
-		"message": "Error"
 	},
 	"export": {
 		"message": "Export"
@@ -272,7 +266,7 @@
 		"message": "Export properties"
 	},
 	"exportPropertiesDescription": {
-		"message": "Save Web Clipper properties to a $strong_start$types.json$strong_end$ file that can be imported into your Obsidian vault, or into Web Clipper on other devices.",
+		"message": "Save property definitions to a portable $strong_start$types.json$strong_end$ file for another Open Markdown Clipper installation.",
 		"placeholders": {
 			"strong_end": {
 				"content": "</strong>"
@@ -283,10 +277,10 @@
 		}
 	},
 	"extensionDescription": {
-		"message": "Save content from the web in a private and durable format that you can access offline. The official browser extension for Obsidian."
+		"message": "Capture web content as durable Markdown for clipboard, download, and local destinations."
 	},
 	"extensionName": {
-		"message": "Obsidian Web Clipper"
+		"message": "Open Markdown Clipper"
 	},
 	"failedToCopyText": {
 		"message": "Failed to copy text"
@@ -315,12 +309,6 @@
 	"failedToInitializeContent": {
 		"message": "Unable to initialize page content."
 	},
-	"failedToProcessInterpreter": {
-		"message": "Interpreter processing failed. Please try again."
-	},
-	"failedToResetProviders": {
-		"message": "Failed to reset providers and models"
-	},
 	"failedToResetTemplate": {
 		"message": "Failed to reset default template. Please try again."
 	},
@@ -329,9 +317,6 @@
 	},
 	"failedToSaveFile": {
 		"message": "Failed to save file"
-	},
-	"failedToSaveProvider": {
-		"message": "Failed to save provider. Please try again."
 	},
 	"feedback": {
 		"message": "Feedback"
@@ -350,9 +335,6 @@
 	},
 	"generalSettings": {
 		"message": "General settings"
-	},
-	"getApiKeyHere": {
-		"message": "Get your $1 API key here."
 	},
 	"help": {
 		"message": "Help"
@@ -409,18 +391,12 @@
 		"message": "Import properties"
 	},
 	"importPropertiesDescription": {
-		"message": "To import your properties from Obsidian, locate the $strong_1_start$types.json$strong_1_end$ file in the $strong_2_start$.obsidian$strong_2_end$ folder within your vault. Note this folder is hidden by default on most operating systems.",
+		"message": "Import property definitions from a compatible $strong_1_start$types.json$strong_1_end$ file.",
 		"placeholders": {
 			"strong_1_end": {
 				"content": "</strong>"
 			},
 			"strong_1_start": {
-				"content": "<strong>"
-			},
-			"strong_2_end": {
-				"content": "</strong>"
-			},
-			"strong_2_start": {
 				"content": "<strong>"
 			}
 		}
@@ -430,26 +406,6 @@
 	},
 	"importTemplate": {
 		"message": "Import template"
-	},
-	"interpret": {
-		"message": "interpret"
-	},
-	"interpreter": {
-		"message": "Interpreter"
-	},
-	"interpreterContext": {
-		"message": "Interpreter context"
-	},
-	"interpreterContextDescription": {
-		"message": "The context used to interpret prompt variables. Overrides the default context defined in $link_start$Interpreter settings$link_end$. Variables can be used here.",
-		"placeholders": {
-			"link_end": {
-				"content": "</a>"
-			},
-			"link_start": {
-				"content": "<a href=\"?section=interpreter\">"
-			}
-		}
 	},
 	"language": {
 		"message": "Language"
@@ -463,41 +419,11 @@
 	"lastUsed": {
 		"message": "Last used"
 	},
-	"legacyMode": {
-		"message": "Legacy mode"
-	},
-	"legacyModeDescription": {
-		"message": "Uses the URI clipping method compatible with Obsidian 1.6.7 or earlier. Note that the length of the content you can clip is limited by your browser and OS. Some pages may fail without any errors."
-	},
 	"loadArticle": {
 		"message": "Read article"
 	},
 	"loading": {
 		"message": "Loading…"
-	},
-	"modelName": {
-		"message": "Display name"
-	},
-	"modelNameDescription": {
-		"message": "The name of the model you want to display in the interface."
-	},
-	"modelProvider": {
-		"message": "Provider"
-	},
-	"modelProviderDescription": {
-		"message": "Select the provider for this model."
-	},
-	"modelProviderPlaceholder": {
-		"message": "Provider"
-	},
-	"modelRequiredFields": {
-		"message": "Model name, Provider, and Model ID are required."
-	},
-	"models": {
-		"message": "Models"
-	},
-	"modelsListFor": {
-		"message": "Models list for $1"
 	},
 	"more": {
 		"message": "More"
@@ -536,15 +462,7 @@
 		"message": "Note name"
 	},
 	"noteNameFormatDescription": {
-		"message": "Format for the file name of the note. You can use variables like {{title}}, {{date}}, and {{published}} to pre-populate data from the page. $link_start$Learn more$link_end$.",
-		"placeholders": {
-			"link_end": {
-				"content": "</a>"
-			},
-			"link_start": {
-				"content": "<a href=\"https://help.obsidian.md/web-clipper/variables\" target=\"_blank\">"
-			}
-		}
+		"message": "Format the Markdown file name with page variables such as {{title}}, {{date}}, and {{published}}."
 	},
 	"notesAboutPage": {
 		"message": "Notes about this page..."
@@ -560,9 +478,6 @@
 	},
 	"openBehaviorTitle": {
 		"message": "Open behavior"
-	},
-	"openEmbedded": {
-		"message": "Open in page"
 	},
 	"openHighlights": {
 		"message": "Open highlights"
@@ -600,12 +515,6 @@
 	"pleaseReload": {
 		"message": "Please try reloading the page."
 	},
-	"popularModels": {
-		"message": "Popular models"
-	},
-	"popularModelsDescription": {
-		"message": "Choose from commonly used models or enter custom model details."
-	},
 	"popup": {
 		"message": "Popup"
 	},
@@ -617,9 +526,6 @@
 	},
 	"preview": {
 		"message": "Preview"
-	},
-	"processing": {
-		"message": "processing"
 	},
 	"properties": {
 		"message": "Properties"
@@ -650,48 +556,6 @@
 	},
 	"propertyValue": {
 		"message": "Property value"
-	},
-	"provider": {
-		"message": "Provider"
-	},
-	"providerApiKey": {
-		"message": "API key"
-	},
-	"providerApiKeyDescription": {
-		"message": "Your API key for this provider."
-	},
-	"providerBaseUrl": {
-		"message": "Base URL"
-	},
-	"providerBaseUrlDescription": {
-		"message": "The API endpoint URL for this provider."
-	},
-	"providerModelId": {
-		"message": "Model ID"
-	},
-	"providerModelIdDescription": {
-		"message": "The identifier of the model from your provider. Typically a short name without spaces."
-	},
-	"providerModelIdPlaceholder": {
-		"message": "Model ID"
-	},
-	"providerName": {
-		"message": "Provider name"
-	},
-	"providerNameDescription": {
-		"message": "Display name for this provider."
-	},
-	"providerPreset": {
-		"message": "Preset"
-	},
-	"providerPresetDescription": {
-		"message": "Choose a provider or create a custom one."
-	},
-	"providerRequiredFields": {
-		"message": "Provider name and Base URL are required."
-	},
-	"providers": {
-		"message": "Providers"
 	},
 	"rateExtensionDescription": {
 		"message": "Are you enjoying Web Clipper? Help us by giving it a rating."
@@ -738,6 +602,9 @@
 	"readerColorSchemeDefault": {
 		"message": "Default"
 	},
+	"readerClipboardDestination": {
+		"message": "Clipboard"
+	},
 	"readerCurrentPosition": {
 		"message": "Current position"
 	},
@@ -745,13 +612,28 @@
 		"message": "Custom CSS"
 	},
 	"readerCustomCssDescription": {
-		"message": "CSS applied automatically in reading view."
+		"message": "CSS applied automatically in reading view. CSS can load remote resources and restyle Reader. Use only CSS and full settings imports you trust."
 	},
 	"readerDarkTheme": {
 		"message": "Dark mode theme"
 	},
 	"readerDarkThemeDescription": {
 		"message": "Use a different theme in dark mode."
+	},
+	"readerDefaultDestination": {
+		"message": "Default destination"
+	},
+	"readerDeliverMarkdown": {
+		"message": "Deliver Markdown"
+	},
+	"readerDeliveryFailed": {
+		"message": "Delivery failed"
+	},
+	"readerDeliverySuccess": {
+		"message": "Delivered"
+	},
+	"readerDownloadDestination": {
+		"message": "Download"
 	},
 	"readerError": {
 		"message": "Failed to extract content."
@@ -819,6 +701,9 @@
 	"readerOn": {
 		"message": "Reader"
 	},
+	"readerOpenClipper": {
+		"message": "Open clipper"
+	},
 	"readerPinPlayer": {
 		"message": "Pin player"
 	},
@@ -849,9 +734,6 @@
 	"readerViewFullSize": {
 		"message": "View full size"
 	},
-	"recommended": {
-		"message": "recommended"
-	},
 	"refresh": {
 		"message": "Refresh"
 	},
@@ -867,9 +749,6 @@
 	"removeUnusedPropertiesDescription": {
 		"message": "Remove all properties that are not used in any template."
 	},
-	"removeVault": {
-		"message": "Remove vault"
-	},
 	"replaceContent": {
 		"message": "Replace the page content"
 	},
@@ -881,12 +760,6 @@
 	},
 	"resetDefaultTemplateDescription": {
 		"message": "Remove any changes you've made to the default template."
-	},
-	"resetProvidersAndModels": {
-		"message": "Reset default models"
-	},
-	"resetProvidersAndModelsDescription": {
-		"message": "Reset providers and models to the default settings."
 	},
 	"save": {
 		"message": "Save"
@@ -905,9 +778,6 @@
 	},
 	"searchVariables": {
 		"message": "Search variables..."
-	},
-	"selectProvider": {
-		"message": "Select a provider"
 	},
 	"selectTemplateToExport": {
 		"message": "Please select a template to export."
@@ -956,12 +826,6 @@
 	},
 	"showPageVariables": {
 		"message": "Show page variables"
-	},
-	"silentOpen": {
-		"message": "Save clipped note without opening it"
-	},
-	"silentOpenDescription": {
-		"message": "Clipped notes will be saved but will not open as a new tab. Obsidian will still be brought to the foreground."
 	},
 	"sort": {
 		"message": "Sort"
@@ -1026,45 +890,11 @@
 	"templatesHeading": {
 		"message": "Templates"
 	},
-	"thinking": {
-		"message": "thinking"
-	},
-	"unknownProvider": {
-		"message": "Unknown provider"
-	},
 	"updateAvailable": {
 		"message": "An update is available."
 	},
 	"usingLatestVersion": {
 		"message": "You are using the latest version."
-	},
-	"vault": {
-		"message": "Vault"
-	},
-	"vaultDescription": {
-		"message": "Select the default vault for this template. Go to $link_start$general settings$link_end$ to add or remove vaults.",
-		"placeholders": {
-			"link_end": {
-				"content": "</a>"
-			},
-			"link_start": {
-				"content": "<a href=\"?section=general\">"
-			}
-		}
-	},
-	"vaults": {
-		"message": "Vaults"
-	},
-	"vaultsDescription": {
-		"message": "By default, clipped notes are saved to the currently open vault. You can add vaults here if you want the option to save to different vaults. Vault names must exactly match the name of the Obsidian vault. Press $strong_start$enter$strong_end$ to add a vault.",
-		"placeholders": {
-			"strong_end": {
-				"content": "</strong>"
-			},
-			"strong_start": {
-				"content": "<strong>"
-			}
-		}
 	},
 	"version": {
 		"message": "Version"

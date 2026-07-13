@@ -163,7 +163,7 @@ async function applyReaderTheme() {
 		? settings.appearance === 'dark' || (settings.appearance === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 		: window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-	highlightThemeClasses = ['obsidian-reader-active', isDark ? 'theme-dark' : 'theme-light'];
+	highlightThemeClasses = ['open-markdown-clipper-reader-active', isDark ? 'theme-dark' : 'theme-light'];
 
 	if (settings) {
 		const effectiveTheme = isDark && settings.darkTheme !== 'same' ? settings.darkTheme : settings.lightTheme;
@@ -974,14 +974,14 @@ async function exportCurrentContext() {
 
 	const browserType = await detectBrowser();
 	const timestamp = dayjs().format('YYYYMMDDHHmm');
-	const fileName = `obsidian-web-clipper-highlights-${timestamp}.json`;
+	const fileName = `open-markdown-clipper-web-clipper-highlights-${timestamp}.json`;
 
 	if (browserType === 'safari' || browserType === 'mobile-safari') {
 		if (navigator.share) {
 			try {
 				await navigator.share({
 					files: [new File([blob], fileName, { type: 'application/json' })],
-					title: 'Exported Obsidian Web Clipper Highlights',
+					title: 'Exported Open Markdown Clipper Highlights',
 				});
 			} catch {
 				window.open(blobUrl);
@@ -1186,8 +1186,8 @@ async function fetchDefuddled(url: string): Promise<DefuddleResult | null> {
 		}
 
 		return { title, site, content };
-	} catch (error) {
-		console.error('Failed to fetch page:', url, error);
+	} catch {
+		console.error('Failed to fetch page');
 		return null;
 	}
 }

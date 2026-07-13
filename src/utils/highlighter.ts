@@ -98,12 +98,10 @@ export let highlights: AnyHighlightData[] = [];
 export let isApplyingHighlights = false;
 export let pageTitle: string = '';
 
-// The bridge interface: every highlighter function that reader-script needs.
-// content.js exposes an object of this shape on window.__obsidianHighlighter;
-// reader.ts's hl() helper returns it when present (case 2: live page + reader),
-// or falls back to the direct local import (case 3: standalone reader.html).
+// Compatibility bridge shape for integrations that load more than one
+// highlighter module copy. Production Reader runs on reader.html.
 declare global {
-	interface Window { __obsidianHighlighter?: HighlighterAPI }
+	interface Window { __openMarkdownClipperHighlighter?: HighlighterAPI }
 }
 
 export interface HighlighterAPI {
@@ -248,7 +246,7 @@ export function updateHighlights(newHighlights: AnyHighlightData[]) {
 // stays available as long as any highlights exist (managed independently via
 // syncHoverListener, which checks highlights.length).
 export function toggleHighlighterMenu(isActive: boolean) {
-	document.body.classList.toggle('obsidian-highlighter-active', isActive);
+	document.body.classList.toggle('open-markdown-clipper-highlighter-active', isActive);
 	if (isActive) {
 		document.addEventListener('mouseup', handleMouseUp);
 		document.addEventListener('touchstart', handleTouchStart);
@@ -314,8 +312,8 @@ export function redo() {
 }
 
 function updateUndoRedoButtons() {
-	const undoButton = document.getElementById('obsidian-undo-highlights');
-	const redoButton = document.getElementById('obsidian-redo-highlights');
+	const undoButton = document.getElementById('open-markdown-clipper-undo-highlights');
+	const redoButton = document.getElementById('open-markdown-clipper-redo-highlights');
 
 	if (undoButton) {
 		undoButton.classList.toggle('active', canUndo());
@@ -353,12 +351,12 @@ async function handleClipButtonClick(e: Event) {
 
 export function createHighlighterMenu() {
 	// Check if the menu already exists
-	let menu = document.querySelector('.obsidian-highlighter-menu');
+	let menu = document.querySelector('.open-markdown-clipper-highlighter-menu');
 	
 	// If the menu doesn't exist, create it
 	if (!menu) {
 		menu = document.createElement('div');
-		menu.className = 'obsidian-highlighter-menu';
+		menu.className = 'open-markdown-clipper-highlighter-menu';
 		document.body.appendChild(menu);
 	}
 	
@@ -370,14 +368,14 @@ export function createHighlighterMenu() {
 	// Add clip button or no highlights message
 	if (highlightCount > 0) {
 		const clipButton = document.createElement('button');
-		clipButton.id = 'obsidian-clip-button';
+		clipButton.id = 'open-markdown-clipper-clip-button';
 		clipButton.className = 'mod-cta';
 		clipButton.textContent = 'Clip highlights';
 		menu.appendChild(clipButton);
 		
 		// Add clear highlights button
 		const clearButton = document.createElement('button');
-		clearButton.id = 'obsidian-clear-highlights';
+		clearButton.id = 'open-markdown-clipper-clear-highlights';
 		clearButton.textContent = highlightText + ' ';
 		
 		// Add trash icon
@@ -407,7 +405,7 @@ export function createHighlighterMenu() {
 	
 	// Add undo button
 	const undoButton = document.createElement('button');
-	undoButton.id = 'obsidian-undo-highlights';
+	undoButton.id = 'open-markdown-clipper-undo-highlights';
 	const undoSvg = createSVG({
 		width: '16',
 		height: '16',
@@ -423,7 +421,7 @@ export function createHighlighterMenu() {
 	
 	// Add redo button
 	const redoButton = document.createElement('button');
-	redoButton.id = 'obsidian-redo-highlights';
+	redoButton.id = 'open-markdown-clipper-redo-highlights';
 	const redoSvg = createSVG({
 		width: '16',
 		height: '16',
@@ -439,7 +437,7 @@ export function createHighlighterMenu() {
 	
 	// Add exit button
 	const exitButton = document.createElement('button');
-	exitButton.id = 'obsidian-exit-highlighter';
+	exitButton.id = 'open-markdown-clipper-exit-highlighter';
 	const exitSvg = createSVG({
 		width: '16',
 		height: '16',
@@ -456,8 +454,8 @@ export function createHighlighterMenu() {
 	// Add event listeners to the buttons we just created
 	if (highlightCount > 0) {
 		// Use the clearButton and clipButton we already created
-		const clearButtonEl = menu.querySelector('#obsidian-clear-highlights') as HTMLButtonElement;
-		const clipButtonEl = menu.querySelector('#obsidian-clip-button') as HTMLButtonElement;
+		const clearButtonEl = menu.querySelector('#open-markdown-clipper-clear-highlights') as HTMLButtonElement;
+		const clipButtonEl = menu.querySelector('#open-markdown-clipper-clip-button') as HTMLButtonElement;
 
 		if (clearButtonEl) {
 			clearButtonEl.addEventListener('click', clearHighlights);
@@ -477,9 +475,9 @@ export function createHighlighterMenu() {
 	}
 
 	// Use the buttons we already created
-	const exitButtonEl = menu.querySelector('#obsidian-exit-highlighter') as HTMLButtonElement;
-	const undoButtonEl = menu.querySelector('#obsidian-undo-highlights') as HTMLButtonElement;
-	const redoButtonEl = menu.querySelector('#obsidian-redo-highlights') as HTMLButtonElement;
+	const exitButtonEl = menu.querySelector('#open-markdown-clipper-exit-highlighter') as HTMLButtonElement;
+	const undoButtonEl = menu.querySelector('#open-markdown-clipper-undo-highlights') as HTMLButtonElement;
+	const redoButtonEl = menu.querySelector('#open-markdown-clipper-redo-highlights') as HTMLButtonElement;
 
 	if (exitButtonEl) {
 		exitButtonEl.addEventListener('click', exitHighlighterMode);
@@ -509,7 +507,7 @@ export function createHighlighterMenu() {
 }
 
 function removeHighlighterMenu() {
-	const menu = document.querySelector('.obsidian-highlighter-menu');
+	const menu = document.querySelector('.open-markdown-clipper-highlighter-menu');
 	if (menu) {
 		menu.remove();
 	}
@@ -729,8 +727,8 @@ function getHighlightRanges(range: Range): AnyHighlightData[] {
 				endOffset: textEndOffset,
 				textQuote: createTextQuoteAnchor(blockElement, textStartOffset, textEndOffset),
 			});
-		} catch (e) {
-			console.warn('Error creating text highlight for block:', blockElement, e);
+		} catch {
+			console.warn('Error creating text highlight for block');
 		}
 	}
 
@@ -1117,7 +1115,7 @@ export interface ExportedHighlight {
 }
 
 // Export shape used by every highlight-export surface (highlights.html,
-// options-page export, clip-to-Obsidian content-extractor). Coalesces group
+// options-page export, destination clipping content-extractor). Coalesces group
 // members into one entry, joining content with blank lines; merges notes.
 // `transformContent` lets the clipper path run its content through
 // createMarkdownContent while the JSON exports pass it through verbatim.
@@ -1141,14 +1139,11 @@ export function collapseGroupsForExport(
 
 // Cross-tab sync: when another tab/extension page (e.g. highlights.html)
 // deletes or modifies highlights for this URL, pick up the change.
-// The bridge check ensures only the owning module instance acts: if the
-// bridge exists and points to a DIFFERENT copy of applyHighlights (i.e.,
-// we're reader-script but content.js owns the bridge), we skip — content.js's
-// listener will handle it. Without this, both bundles render and you get
-// duplicate overlays / delete buttons.
+// If a compatibility bridge points to a different module copy, only its
+// owning listener handles the update to avoid duplicate overlays.
 browser.storage.onChanged.addListener((changes, area) => {
 	if (area !== 'local' || !changes.highlights) return;
-	const bridge = window.__obsidianHighlighter;
+	const bridge = window.__openMarkdownClipperHighlighter;
 	if (bridge && bridge.applyHighlights !== applyHighlights) return;
 	const url = normalizeUrl(getPageUrl());
 	const newAll = (changes.highlights.newValue || {}) as HighlightsStorage;
@@ -1187,7 +1182,7 @@ export async function loadHighlights() {
 		// of highlighter mode.
 		applyHighlights();
 		if (generalSettings.alwaysShowHighlights) {
-			document.body.classList.add('obsidian-highlighter-always-show');
+			document.body.classList.add('open-markdown-clipper-highlighter-always-show');
 		}
 		if (migrated) saveHighlights();
 	} else {
@@ -1250,7 +1245,7 @@ export function clearHighlights() {
 			bumpHighlightsVersion();
 			removeExistingHighlights();
 			syncHoverListener();
-			console.log('Highlights cleared for:', url);
+			console.log('Highlights cleared');
 			browser.runtime.sendMessage({ action: "highlightsCleared" });
 			updateHighlighterMenu();
 			addToHistory('remove', oldHighlights, []);
@@ -1260,13 +1255,13 @@ export function clearHighlights() {
 
 export function updateHighlighterMenu() {
 	removeHighlighterMenu();
-	if (document.body.classList.contains('obsidian-highlighter-active')) {
+	if (document.body.classList.contains('open-markdown-clipper-highlighter-active')) {
 		createHighlighterMenu();
 	}
 }
 
 function handleKeyDown(event: KeyboardEvent) {
-	if (event.key === 'Escape' && document.body.classList.contains('obsidian-highlighter-active')) {
+	if (event.key === 'Escape' && document.body.classList.contains('open-markdown-clipper-highlighter-active')) {
 		exitHighlighterMode();
 	} else if ((event.metaKey || event.ctrlKey) && event.key === 'z') {
 		event.preventDefault();

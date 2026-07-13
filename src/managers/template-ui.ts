@@ -6,7 +6,6 @@ import { generalSettings } from '../utils/storage-utils';
 import { updateUrl } from '../utils/routing';
 import { handleDragStart, handleDragOver, handleDrop, handleDragEnd } from '../utils/drag-and-drop';
 import { createElementWithClass, createElementWithHTML } from '../utils/dom-utils';
-import { updatePromptContextVisibility } from './interpreter-settings';
 import { showSettingsSection } from './settings-section-ui';
 import { updatePropertyType } from './property-types-manager';
 import { getMessage } from '../utils/i18n';
@@ -150,7 +149,6 @@ export function showTemplateEditor(template: Template | null): void {
 			noteContentFormat: '{{content}}',
 			properties: [],
 			triggers: [],
-			context: ''
 		};
 		templates.unshift(editingTemplate);
 		setEditingTemplateIndex(0);
@@ -198,12 +196,6 @@ export function showTemplateEditor(template: Template | null): void {
 		validateTemplateField(noteContentFormat, true);
 	}
 
-	const promptContextTextarea = document.getElementById('prompt-context') as HTMLTextAreaElement;
-	if (promptContextTextarea) {
-		promptContextTextarea.value = editingTemplate.context || '';
-		validateTemplateField(promptContextTextarea, true);
-	}
-
 	updateBehaviorFields();
 
 	if (behaviorSelect) {
@@ -240,25 +232,7 @@ export function showTemplateEditor(template: Template | null): void {
 		});
 	}
 
-	const vaultSelect = document.getElementById('template-vault') as HTMLSelectElement;
-	if (vaultSelect) {
-		// Clear existing vault options
-		vaultSelect.textContent = '';
-		const lastUsedOption = document.createElement('option');
-		lastUsedOption.value = '';
-		lastUsedOption.textContent = getMessage('lastUsed');
-		vaultSelect.appendChild(lastUsedOption);
-		generalSettings.vaults.forEach(vault => {
-			const option = document.createElement('option');
-			option.value = vault;
-			option.textContent = vault;
-			vaultSelect.appendChild(option);
-		});
-		vaultSelect.value = editingTemplate.vault || '';
-	}
-
 	updateUrl('templates', editingTemplate.id);
-	updatePromptContextVisibility();
 }
 
 function updateBehaviorFields(): void {
@@ -522,9 +496,6 @@ export function updateTemplateFromForm(): void {
 	const noteContentFormat = document.getElementById('note-content-format') as HTMLTextAreaElement;
 	if (noteContentFormat) template.noteContentFormat = noteContentFormat.value;
 
-	const promptContextTextarea = document.getElementById('prompt-context') as HTMLTextAreaElement;
-	if (promptContextTextarea) template.context = promptContextTextarea.value;
-
 	const propertyElements = document.querySelectorAll('#template-properties .property-editor');
 	template.properties = Array.from(propertyElements).map(prop => {
 		const nameInput = prop.querySelector('.property-name') as HTMLInputElement;
@@ -540,9 +511,6 @@ export function updateTemplateFromForm(): void {
 
 	const triggersTextarea = document.getElementById('url-patterns') as HTMLTextAreaElement;
 	if (triggersTextarea) template.triggers = triggersTextarea.value.split('\n').filter(Boolean);
-
-	const vaultSelect = document.getElementById('template-vault') as HTMLSelectElement;
-	if (vaultSelect) template.vault = vaultSelect.value || undefined;
 
 	hasUnsavedChanges = true;
 }
@@ -774,7 +742,4 @@ export function initializeTemplateValidation(): void {
 	const pathInput = document.getElementById('template-path-name') as HTMLInputElement;
 	addValidationListener(pathInput, false);
 
-	// Prompt context (multiline, show line numbers)
-	const promptContext = document.getElementById('prompt-context') as HTMLTextAreaElement;
-	addValidationListener(promptContext, true);
 }

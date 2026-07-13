@@ -21,20 +21,22 @@ function removeDSStore(dir) {
 }
 
 module.exports = (env, argv) => {
-	const isFirefox = env.BROWSER === 'firefox';
-	const isSafari = env.BROWSER === 'safari';
+	const browserName = env?.BROWSER;
+	if (!['chrome', 'firefox'].includes(browserName)) {
+		throw new TypeError('BROWSER must be one of: chrome, firefox');
+	}
+	const isFirefox = browserName === 'firefox';
 	const isProduction = argv.mode === 'production';
 
 	const getOutputDir = () => {
 		if (isProduction) {
-			return isFirefox ? 'dist_firefox' : (isSafari ? 'dist_safari' : 'dist');
+			return isFirefox ? 'dist_firefox' : 'dist';
 		} else {
-			return isFirefox ? 'dev_firefox' : (isSafari ? 'dev_safari' : 'dev');
+			return isFirefox ? 'dev_firefox' : 'dev';
 		}
 	};
 
 	const outputDir = getOutputDir();
-	const browserName = isFirefox ? 'firefox' : (isSafari ? 'safari' : 'chrome');
 
 	const mainConfig = {
 		mode: argv.mode,
@@ -47,13 +49,13 @@ module.exports = (env, argv) => {
 			background: './src/background.ts',
 			style: './src/style.scss',
 			highlighter: './src/highlighter.scss',
-			reader: './src/reader.scss',
-			'reader-script': './src/reader-script.ts'
+			reader: './src/reader.scss'
 		},
 		output: {
 			path: path.resolve(__dirname, outputDir),
 			filename: '[name].js',
 			module: false,
+			clean: true,
 		},
 		devtool: isProduction ? false : 'source-map',
 		optimization: {
@@ -139,10 +141,11 @@ module.exports = (env, argv) => {
 			new CopyPlugin({
 				patterns: [
 					{ 
-						from: isFirefox ? "src/manifest.firefox.json" : 
-							  (isSafari ? "src/manifest.safari.json" : "src/manifest.chrome.json"), 
+						from: isFirefox ? "src/manifest.firefox.json" : "src/manifest.chrome.json",
 						to: "manifest.json" 
 					},
+					{ from: 'LICENSE', to: 'LICENSE', toType: 'file' },
+					{ from: 'NOTICE.md', to: 'NOTICE.md', toType: 'file' },
 					{ from: "src/popup.html", to: "popup.html" },
 					{ from: "src/side-panel.html", to: "side-panel.html" },
 					{ from: "src/settings.html", to: "settings.html" },
@@ -174,7 +177,7 @@ module.exports = (env, argv) => {
 			...(isProduction ? [
 				new ZipPlugin({
 					path: path.resolve(__dirname, 'builds'),
-					filename: `obsidian-web-clipper-${package.version}-${browserName}.zip`,
+					filename: `open-markdown-clipper-${package.version}-${browserName}.zip`,
 				})
 			] : [])
 		]

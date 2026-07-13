@@ -40,6 +40,12 @@
 	border-radius: var(--radius-s);
 	corner-shape: var(--corner-shape);
 	white-space: nowrap;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	color: var(--text-normal);
+	font-family: inherit;
+	text-align: start;
 
 	&:hover {
 		background-color: var(--background-modifier-hover);

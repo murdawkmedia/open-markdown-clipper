@@ -47,7 +47,7 @@ function buildThemeGrid(
 
 	for (const { id: themeId, name: themeName } of THEMES) {
 		const option = document.createElement('div');
-		option.className = 'reader-theme-option obsidian-reader-active' + (themeId === selectedTheme ? ' is-active' : '');
+		option.className = 'reader-theme-option open-markdown-clipper-reader-active' + (themeId === selectedTheme ? ' is-active' : '');
 		option.dataset.scheme = themeId;
 		option.setAttribute('role', 'button');
 		option.setAttribute('tabindex', '0');

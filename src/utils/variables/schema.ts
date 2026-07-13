@@ -60,9 +60,7 @@ export async function processSchema(match: string, variables: { [key: string]: s
 					}
 				}
 			}
-		} catch (error) {
-			console.error('Error processing schema array:', error);
-			console.error('Raw value:', variables[`{{schema:${fullArrayKey}}}`]);
+		} catch {
 			return '';
 		}
 	} else {

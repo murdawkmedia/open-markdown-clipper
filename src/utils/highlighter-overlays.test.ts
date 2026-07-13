@@ -53,7 +53,7 @@ describe('renderTextHighlight', () => {
 		// Same text appears in a reader settings panel; the fallback must match
 		// the article copy, not the chrome.
 		document.body.innerHTML =
-			'<div class="obsidian-reader-settings">Reader settings</div>' +
+			'<div class="open-markdown-clipper-reader-settings">Reader settings</div>' +
 			'<article><p>Reader settings make the page easier to read.</p></article>';
 		renderTextHighlight({
 			id: '3',

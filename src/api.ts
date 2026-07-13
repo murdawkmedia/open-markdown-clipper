@@ -1,4 +1,4 @@
-// Programmatic API for Obsidian Web Clipper.
+// Programmatic API for Open Markdown Clipper.
 // Environment-agnostic — no Node.js or browser dependencies.
 // The caller provides a DocumentParser for their environment.
 
@@ -171,7 +171,7 @@ export function matchTemplate(templates: Template[], url: string, schemaOrgData?
  * The caller is responsible for:
  * - Fetching the HTML
  * - Providing a DocumentParser for their environment
- * - Writing the output (file, vault API, etc.)
+ * - Writing the output (file, database API, etc.)
  */
 export async function clip(options: ClipOptions): Promise<ClipResult> {
 	const { html, url, template, documentParser, propertyTypes, parsedDocument } = options;

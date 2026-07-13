@@ -5,6 +5,36 @@ import { TextHighlightData } from './utils/highlighter';
 import { debounce } from './utils/debounce';
 import { Settings } from './types/types';
 import { debugLog } from './utils/debug';
+import { dispatchOpenCustomUriMessage } from './utils/custom-uri-opener';
+import { createSerializedClipRecorder, dispatchRecordClipMessage } from './utils/clip-recorder';
+import { recordClipInStorage } from './utils/storage-utils';
+import {
+	boundedQuickClipDelay,
+	createBackgroundQuickClipController,
+} from './utils/background-quick-clip';
+import {
+	createDataConsentController,
+	DataConsentPermissionsApi,
+	dispatchDataTransmissionConsentCheckMessage,
+} from './utils/data-consent';
+
+const dataConsentController = createDataConsentController(
+	browser.permissions as unknown as DataConsentPermissionsApi,
+);
+void dataConsentController.prime();
+
+const serializedClipRecorder = createSerializedClipRecorder(async (record) => {
+	await recordClipInStorage(record.clipAction, record.url, record.title);
+});
+
+const quickClipController = createBackgroundQuickClipController({
+	setPopup: (details) => browser.action.setPopup(details),
+	openPopup: (details) => browser.action.openPopup(details),
+	sendMessage: (message) => browser.runtime.sendMessage(message),
+	createNonce: () => globalThis.crypto.randomUUID(),
+	now: () => Date.now(),
+	delay: boundedQuickClipDelay,
+}, 'popup.html');
 
 const YOUTUBE_EMBED_RULE_ID = 9001;
 const YOUTUBE_INNERTUBE_RULE_ID = 9002;
@@ -22,7 +52,7 @@ async function enableYouTubeEmbedRule(tabId: number): Promise<void> {
 				requestHeaders: [{
 					header: 'Referer',
 					operation: 'set' as any,
-					value: 'https://obsidian.md/'
+					value: 'https://github.com/murdawkmedia/open-markdown-clipper'
 				}]
 			},
 			condition: {
@@ -208,6 +238,16 @@ function isReaderPageUrl(url: string | undefined): string | null {
 	return null;
 }
 
+function isTrustedReaderSidePanelSender(sender: browser.Runtime.MessageSender): boolean {
+	const readerPageUrl = sender.tab?.url;
+	if (!readerPageUrl || !sender.url) return false;
+	const articleUrl = isReaderPageUrl(readerPageUrl);
+	if (!articleUrl) return false;
+	const expectedSenderUrl = browser.runtime.getURL('side-panel.html')
+		+ '?context=iframe&readerUrl=' + encodeURIComponent(articleUrl);
+	return sender.url === expectedSenderUrl;
+}
+
 async function exitReaderPageIfNeeded(tabId: number, readerUrl?: string): Promise<boolean> {
 	let originalUrl: string | null = null;
 	try {
@@ -215,10 +255,12 @@ async function exitReaderPageIfNeeded(tabId: number, readerUrl?: string): Promis
 		originalUrl = isReaderPageUrl(tab.url);
 	} catch {}
 
-	// Fallback: the embedded clipper passes the reader URL when
-	// tabs.get() can't access the extension page URL
+	// The extension-origin Reader side panel carries the original article URL
+	// for browsers that omit extension URLs from tabs.get().
 	if (!originalUrl && readerUrl) {
-		originalUrl = isReaderPageUrl(readerUrl);
+		const nestedReaderUrl = isReaderPageUrl(readerUrl);
+		originalUrl = nestedReaderUrl
+			?? (isValidUrl(readerUrl) && !isBlankPage(readerUrl) ? readerUrl : null);
 	}
 
 	if (originalUrl) {
@@ -230,6 +272,28 @@ async function exitReaderPageIfNeeded(tabId: number, readerUrl?: string): Promis
 	return false;
 }
 
+async function toggleReaderPageForTab(
+	tabId: number,
+	readerUrl?: string,
+): Promise<{ success: boolean; isActive: boolean }> {
+	if (await exitReaderPageIfNeeded(tabId, readerUrl)) {
+		return { success: true, isActive: false };
+	}
+
+	const tab = await browser.tabs.get(tabId);
+	if (!tab.url || !isValidUrl(tab.url) || isBlankPage(tab.url)) {
+		return { success: false, isActive: false };
+	}
+
+	const extensionReaderUrl = browser.runtime.getURL(
+		'reader.html?url=' + encodeURIComponent(tab.url),
+	);
+	await browser.tabs.update(tabId, { url: extensionReaderUrl });
+	readerModeState[tabId] = true;
+	debouncedUpdateContextMenu(tabId);
+	return { success: true, isActive: true };
+}
+
 async function initialize() {
 	try {
 		// Set up tab listeners
@@ -238,6 +302,7 @@ async function initialize() {
 		browser.tabs.onRemoved.addListener((tabId) => {
 			delete highlighterModeState[tabId];
 			delete readerModeState[tabId];
+			quickClipController.releaseTab(tabId);
 		});
 		
 		// Initialize context menu
@@ -333,33 +398,31 @@ browser.runtime.onMessage.addListener((request: unknown) => {
 
 browser.runtime.onMessage.addListener((request: unknown, sender: browser.Runtime.MessageSender, sendResponse: (response?: any) => void): true | undefined => {
 	if (typeof request === 'object' && request !== null) {
+		const consentCheckHandled = dispatchDataTransmissionConsentCheckMessage(
+			request,
+			destination => dataConsentController.hasConsent(destination),
+			sendResponse,
+		);
+		if (consentCheckHandled) return true;
+
+		const customUriHandled = dispatchOpenCustomUriMessage(request, {
+			hasTransmissionConsent: () => dataConsentController.hasConsent('custom-uri'),
+			queryTabs: (query) => browser.tabs.query(query),
+			updateTab: async (tabId, uri) => {
+				await browser.tabs.update(tabId, { url: uri });
+			},
+		}, sendResponse);
+		if (customUriHandled) return true;
+
+		const recordClipHandled = dispatchRecordClipMessage(
+			request,
+			serializedClipRecorder,
+			sendResponse,
+		);
+		if (recordClipHandled) return true;
+
 		const typedRequest = request as { action: string; isActive?: boolean; hasHighlights?: boolean; tabId?: number; text?: string; section?: string; readerUrl?: string };
 		
-		if (typedRequest.action === 'copy-to-clipboard' && typedRequest.text) {
-			// Use content script to copy to clipboard
-			browser.tabs.query({active: true, currentWindow: true}).then(async (tabs) => {
-				const currentTab = tabs[0];
-				if (currentTab && currentTab.id) {
-					try {
-						const response = await browser.tabs.sendMessage(currentTab.id, {
-							action: 'copy-text-to-clipboard',
-							text: typedRequest.text
-						});
-						if ((response as any) && (response as any).success) {
-							sendResponse({success: true});
-						} else {
-							sendResponse({success: false, error: 'Failed to copy from content script'});
-						}
-					} catch (err) {
-						sendResponse({ success: false, error: (err as Error).message });
-					}
-				} else {
-					sendResponse({success: false, error: 'No active tab found'});
-				}
-			});
-			return true;
-		}
-
 		// fetchProxy is handled by a separate listener below
 
 		if (typedRequest.action === "extractContent" && sender.tab && sender.tab.id) {
@@ -486,61 +549,21 @@ browser.runtime.onMessage.addListener((request: unknown, sender: browser.Runtime
 		}
 
 		if (typedRequest.action === "toggleReaderMode" && typedRequest.tabId) {
-			const tabId = typedRequest.tabId;
-			// Check if the tab is on the extension's reader.html page
-			exitReaderPageIfNeeded(tabId, typedRequest.readerUrl).then((wasReaderPage) => {
-				if (wasReaderPage) {
-					sendResponse({ success: true, isActive: false });
-					return;
-				}
-				injectReaderScript(tabId).then(() => {
-					browser.tabs.sendMessage(tabId, { action: "toggleReaderMode" })
-						.then((response: any) => {
-							if (response?.success) {
-								readerModeState[tabId] = response.isActive ?? false;
-								debouncedUpdateContextMenu(tabId);
-							}
-							sendResponse(response);
-						})
-						.catch(() => {
-							// Page may have reloaded before responding (reader restore)
-							sendResponse({ success: true, isActive: false });
-						});
-				});
-			});
+			toggleReaderPageForTab(typedRequest.tabId, typedRequest.readerUrl)
+				.then(sendResponse)
+				.catch(() => sendResponse({ success: false, isActive: false }));
 			return true;
 		}
 
-		if (typedRequest.action === "getActiveTabAndToggleIframe") {
-			browser.tabs.query({active: true, currentWindow: true}).then(async (tabs) => {
-				const currentTab = tabs[0];
-				if (currentTab && currentTab.id) {
-					try {
-						await routeMessageToTab(currentTab.id, { action: "toggle-iframe" });
-						sendResponse({success: true});
-					} catch (error) {
-						console.error('Error sending toggle-iframe message:', error);
-						sendResponse({success: false, error: error instanceof Error ? error.message : String(error)});
-					}
-				} else {
-					sendResponse({success: false, error: 'No active tab found'});
-				}
-			});
-			return true;
-		}
-
-		if (typedRequest.action === "toggleIframe") {
-			const tab = sender.tab;
-			if (tab?.id) {
-				routeMessageToTab(tab.id, { action: "toggle-iframe" })
-					.then(() => sendResponse({ success: true }))
-					.catch((error) => {
-						console.error('Error toggling iframe:', error);
-						sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
-					});
-			} else {
-				sendResponse({ success: false, error: 'Cannot open iframe on this page' });
+		if (typedRequest.action === 'toggleReaderSidePanel') {
+			const tabId = sender.tab?.id;
+			if (!isTrustedReaderSidePanelSender(sender) || typeof tabId !== 'number') {
+				sendResponse({ success: false, error: 'reader-side-panel-unavailable' });
+				return true;
 			}
+			routeMessageToTab(tabId, { action: 'toggle-iframe' })
+				.then(() => sendResponse({ success: true }))
+				.catch(() => sendResponse({ success: false, error: 'reader-side-panel-unavailable' }));
 			return true;
 		}
 
@@ -641,7 +664,7 @@ browser.runtime.onMessage.addListener((request: unknown, sender: browser.Runtime
 				injectContentScript(tabId)
 					.then(() => sendResponse({ success: true }))
 					.catch((error) => {
-						console.error('[Obsidian Clipper] forceInjectContentScript failed:', error);
+						console.error('[Open Markdown Clipper] forceInjectContentScript failed:', error);
 						sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
 					});
 				return true;
@@ -658,7 +681,7 @@ browser.runtime.onMessage.addListener((request: unknown, sender: browser.Runtime
 				routeMessageToTab(tabId, message).then((response) => {
 					sendResponse(response);
 				}).catch((error) => {
-					console.error('[Obsidian Clipper] Error sending message to tab:', error);
+					console.error('[Open Markdown Clipper] Error sending message to tab:', error);
 					sendResponse({
 						success: false,
 						error: error instanceof Error ? error.message : String(error)
@@ -687,50 +710,11 @@ browser.runtime.onMessage.addListener((request: unknown, sender: browser.Runtime
 			return true;
 		}
 
-		if (typedRequest.action === "openObsidianUrl") {
-			const url = (typedRequest as any).url;
-			if (url) {
-				browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
-					const currentTab = tabs[0];
-					if (currentTab && currentTab.id) {
-						browser.tabs.update(currentTab.id, { url: url }).then(() => {
-							sendResponse({ success: true });
-						}).catch((error) => {
-							console.error('Error opening Obsidian URL:', error);
-							sendResponse({
-								success: false,
-								error: error instanceof Error ? error.message : String(error)
-							});
-						});
-					} else {
-						sendResponse({
-							success: false,
-							error: 'No active tab found'
-						});
-					}
-				}).catch((error) => {
-					console.error('Error querying tabs:', error);
-					sendResponse({
-						success: false,
-						error: error instanceof Error ? error.message : String(error)
-					});
-				});
-				return true;
-			} else {
-				sendResponse({
-					success: false,
-					error: 'Missing URL'
-				});
-				return true;
-			}
-		}
-
 		// For other actions that use sendResponse
 		if (typedRequest.action === "extractContent" ||
 			typedRequest.action === "ensureContentScriptLoaded" ||
 			typedRequest.action === "getHighlighterMode" ||
-			typedRequest.action === "toggleHighlighterMode" ||
-			typedRequest.action === "openObsidianUrl") {
+			typedRequest.action === "toggleHighlighterMode") {
 			return true;
 		}
 	}
@@ -739,31 +723,30 @@ browser.runtime.onMessage.addListener((request: unknown, sender: browser.Runtime
 
 browser.commands.onCommand.addListener(async (command, tab) => {
 	// Some browsers (e.g. Orion) don't pass the tab parameter, so fall back to querying
-	if (!tab?.id) {
+	const hasValidTabId = (tab: browser.Tabs.Tab | undefined): tab is browser.Tabs.Tab & { id: number } => (
+		tab !== undefined
+		&& typeof tab.id === 'number'
+		&& Number.isSafeInteger(tab.id)
+		&& tab.id >= 0
+		&& typeof tab.windowId === 'number'
+		&& Number.isSafeInteger(tab.windowId)
+		&& tab.windowId >= 0
+	);
+	if (!hasValidTabId(tab)) {
 		const tabs = await browser.tabs.query({active: true, currentWindow: true});
 		tab = tabs[0];
 	}
 
 	if (command === 'quick_clip') {
-		if (tab?.id) {
-			openPopup();
-			setTimeout(() => {
-				browser.runtime.sendMessage({action: "triggerQuickClip"})
-					.catch(error => console.error("Failed to send quick clip message:", error));
-			}, 500);
-		}
+		if (hasValidTabId(tab)) await quickClipController.run(tab.id, tab.windowId);
+		return;
 	}
-	if (command === "toggle_highlighter" && tab?.id) {
+	if (command === "toggle_highlighter" && hasValidTabId(tab)) {
 		await ensureContentScriptLoadedInBackground(tab.id);
 		toggleHighlighterMode(tab.id);
 	}
-	if (command === "copy_to_clipboard" && tab?.id) {
-		await browser.tabs.sendMessage(tab.id, { action: "copyToClipboard" });
-	}
-	if (command === "toggle_reader" && tab?.id) {
-		await ensureContentScriptLoadedInBackground(tab.id);
-		await injectReaderScript(tab.id);
-		await browser.tabs.sendMessage(tab.id, { action: "toggleReaderMode" });
+	if (command === "toggle_reader" && hasValidTabId(tab)) {
+		await toggleReaderPageForTab(tab.id);
 	}
 });
 
@@ -793,8 +776,8 @@ const debouncedUpdateContextMenu = debounce(async (tabId: number) => {
 			contexts: browser.Menus.ContextType[];
 		}[] = [
 				{
-					id: "open-obsidian-clipper",
-					title: "Save this page",
+					id: "open-markdown-clipper",
+					title: "Open Markdown Clipper",
 					contexts: ["page", "selection", "image", "video", "audio"]
 				},
 				{
@@ -822,11 +805,6 @@ const debouncedUpdateContextMenu = debounce(async (tabId: number) => {
 					title: "Add to highlights",
 					contexts: ["image", "video", "audio"]
 				},
-				{
-					id: 'open-embedded',
-					title: browser.i18n.getMessage('openEmbedded'),
-					contexts: ["page", "selection"]
-				}
 			];
 
 		const browserType = await detectBrowser();
@@ -849,7 +827,7 @@ const debouncedUpdateContextMenu = debounce(async (tabId: number) => {
 }, 100); // 100ms debounce time
 
 browser.contextMenus.onClicked.addListener(async (info, tab) => {
-	if (info.menuItemId === "open-obsidian-clipper") {
+	if (info.menuItemId === "open-markdown-clipper") {
 		openPopup();
 	} else if (info.menuItemId === "enter-highlighter" && tab && tab.id) {
 		await setHighlighterMode(tab.id, true);
@@ -860,16 +838,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 	} else if (info.menuItemId === "highlight-element" && tab && tab.id) {
 		await highlightElement(tab.id, info);
 	} else if ((info.menuItemId === "enter-reader" || info.menuItemId === "exit-reader") && tab && tab.id) {
-		await ensureContentScriptLoadedInBackground(tab.id);
-		await injectReaderScript(tab.id);
-		const response = await browser.tabs.sendMessage(tab.id, { action: "toggleReaderMode" }) as { success?: boolean; isActive?: boolean };
-		if (response?.success) {
-			readerModeState[tab.id] = response.isActive ?? false;
-			debouncedUpdateContextMenu(tab.id);
-		}
-	} else if (info.menuItemId === 'open-embedded' && tab && tab.id) {
-		await ensureContentScriptLoadedInBackground(tab.id);
-		await browser.tabs.sendMessage(tab.id, { action: "toggle-iframe" });
+		await toggleReaderPageForTab(tab.id);
 	} else if (info.menuItemId === 'open-side-panel' && tab && tab.id && tab.windowId) {
 		chrome.sidePanel.open({ tabId: tab.id });
 		sidePanelOpenWindows.add(tab.windowId);
@@ -1009,69 +978,34 @@ async function highlightElement(tabId: number, info: browser.Menus.OnClickData) 
 	debouncedUpdateContextMenu(tabId);
 }
 
-async function injectReaderScript(tabId: number) {
-	try {
-		await browser.scripting.insertCSS({
-			target: { tabId },
-			files: ['reader.css']
-		});
-		await browser.scripting.insertCSS({
-			target: { tabId },
-			files: ['highlighter.css']
-		}).catch(() => {});
-
-		// Inject scripts in sequence for all browsers
-		await browser.scripting.executeScript({
-			target: { tabId },
-			files: ['browser-polyfill.min.js']
-		});
-		await browser.scripting.executeScript({
-			target: { tabId },
-			files: ['reader-script.js']
-		});
-
-		return true;
-	} catch (error) {
-		console.error('Error injecting reader script:', error);
-		return false;
-	}
-}
-
-// When set to 'reader' or 'embedded', clear the popup so action.onClicked fires
-// instead, handling the action directly without briefly opening the popup.
-const validOpenBehaviors: Settings['openBehavior'][] = ['popup', 'embedded', 'reader'];
+const validOpenBehaviors: Settings['openBehavior'][] = ['popup', 'reader'];
 
 function parseOpenBehavior(raw: string | undefined): Settings['openBehavior'] {
 	return validOpenBehaviors.includes(raw as Settings['openBehavior']) ? raw as Settings['openBehavior'] : 'popup';
 }
 
+let actionPopupUpdateRevision = 0;
+
 async function updateActionPopup(openBehavior?: Settings['openBehavior']): Promise<void> {
+	const revision = ++actionPopupUpdateRevision;
 	if (!openBehavior) {
 		const data = await browser.storage.sync.get('general_settings');
+		if (revision !== actionPopupUpdateRevision) return;
+		let tabs: browser.Tabs.Tab[] = [];
+		try {
+			tabs = await browser.tabs.query({});
+		} catch {}
+		if (revision !== actionPopupUpdateRevision) return;
+		quickClipController.trackTabs(tabs.map((tab) => tab.id));
 		openBehavior = parseOpenBehavior((data.general_settings as Record<string, string>)?.openBehavior);
 	}
 	currentOpenBehavior = openBehavior;
-	if (openBehavior === 'reader' || openBehavior === 'embedded') {
-		await browser.action.setPopup({ popup: '' });
-	} else {
-		await browser.action.setPopup({ popup: 'popup.html' });
-	}
+	await quickClipController.setNormalPopup('popup.html');
 }
 
 let currentOpenBehavior: Settings['openBehavior'] = 'popup';
 
-// In reader/embedded mode, opens embedded iframe instead of popup.
 async function openPopup(): Promise<void> {
-	if (currentOpenBehavior === 'reader' || currentOpenBehavior === 'embedded') {
-		const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-		const tab = tabs[0];
-		if (tab?.id && tab.url && isValidUrl(tab.url) && !isBlankPage(tab.url)) {
-			await ensureContentScriptLoadedInBackground(tab.id);
-			await browser.tabs.sendMessage(tab.id, { action: "toggle-iframe" });
-			return;
-		}
-		// Fall through to popup if tab is invalid
-	}
 	await browser.action.openPopup();
 }
 
@@ -1079,16 +1013,7 @@ browser.action.onClicked.addListener(async (tab) => {
 	if (!tab?.id || !tab.url || !isValidUrl(tab.url) || isBlankPage(tab.url)) return;
 
 	if (currentOpenBehavior === 'reader') {
-		await ensureContentScriptLoadedInBackground(tab.id);
-		await injectReaderScript(tab.id);
-		const response = await browser.tabs.sendMessage(tab.id, { action: "toggleReaderMode" }) as { success?: boolean; isActive?: boolean };
-		if (response?.success) {
-			readerModeState[tab.id] = response.isActive ?? false;
-			debouncedUpdateContextMenu(tab.id);
-		}
-	} else if (currentOpenBehavior === 'embedded') {
-		await ensureContentScriptLoadedInBackground(tab.id);
-		await browser.tabs.sendMessage(tab.id, { action: "toggle-iframe" });
+		await toggleReaderPageForTab(tab.id);
 	}
 });
 

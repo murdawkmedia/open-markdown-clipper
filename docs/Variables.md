@@ -1,12 +1,11 @@
 ---
 permalink: web-clipper/variables
 ---
-[[Obsidian Web Clipper/Templates|Web Clipper templates]] can use variables to automatically pre-populate data from the page in a template. Variables can be used in the **note name**, **note location**, **properties**, and **note content**. Variables can also be modified using [[filters]].
+[[Templates|Web Clipper templates]] can use variables to automatically populate a capture from the current page. Variables can be used in the **title**, **properties**, and **Markdown content**. Variables can also be modified using [[filters]].
 
-Use the `...` icon in the [[Introduction to Obsidian Web Clipper|Web Clipper]] extension to access the current page variables for use in templates. There are five types of variables you can use:
+Use the `...` icon in the [[Introduction to Open Markdown Clipper|Web Clipper]] extension to access the current page variables for use in templates. There are four types of variables you can use:
 
 - [[Variables#Preset variables|Preset variables]]
-- [[Variables#Prompt variables|Prompt variables]]
 - [[Variables#Meta variables|Meta variables]]
 - [[Variables#Selector variables|Selector variables]]
 - [[Variables#Schema.org variables|Schema.org variables]]
@@ -38,35 +37,7 @@ The main content variable is `{{content}}`, which contains the article content, 
 | `{{url}}`           | Current URL                                                                            |
 | `{{words}}`         | Word count                                                                             |
 
-## Prompt variables
-
-Prompt variables leverage language models to extract and modify data using natural language. Prompt variables require [[Interpret web pages|Interpreter]] to be enabled and configured.
-
-Prompt variables use the syntax `{{"a summary of the page"}}`. The double quotes around the prompt are important and distinguish prompts from preset variables. Prompt responses can be post-processed with [[filters]], e.g. `{{"a summary of the page"|blockquote}}`.
-
-### When to use prompt variables
-
-Prompt variables have the benefit of being extremely flexible and easy to write, however they come with several tradeoffs: they are slower to run, and may have cost and privacy considerations depending on the [[Interpret web pages#Models|provider]] you choose.
-
-Unlike other variable types, prompt variables need to be processed by an external language model, so they are replaced only once [[Interpret web pages|Interpreter]] has run.
-
-It is best to *not* use prompt variables if the data you want to extract is in a consistent format that could be extracted with other variable types. 
-
-On the other hand, prompt variables can be useful if the data you want to extract is an *inconsistent* format across websites. For example, you can make a [[Obsidian Web Clipper/Templates|template]] to save books that is agnostic of the book site. Prompt variables like `{{"author of the book"}}` will work across any book site, whereas selector variables typically only work for one site.
-
-### Examples
-
-Prompts can use almost any natural language query. Depending on the model you use, prompts can query or translate data across languages.
-
-- `{{"a three bullet point summary, translated to French"}}` to extract bullet points about the page, and translate them to French.
-- `{{"un resumé de la page en trois points"}}` to extract three bullet points using a prompt in French.
-
-Prompts can transform page content into JSON that can be manipulated with [[Filters|filters]]. For example:
-
-```
-{{"return a JSON object for each tweet, that includes the author, tweet_text, date in YYYY-MM-DD format, and images array (if there are any)"|map:tweet => ({text: tweet.tweet_text, author: tweet.author, date: tweet.date})|template:"${text}\n— [[@${author}]], [[${date}]]\n"}}
-```
-
+Older templates containing quoted prompt expressions are accepted for compatibility, but those expressions resolve to an empty string. Replace them with preset, meta, selector, or schema.org variables.
 
 ## Meta variables
 
@@ -97,7 +68,7 @@ Selector variables can also be used directly in [[Templates#Template logic|templ
 
 ## Schema.org variables
 
-Schema variables allow you to extract data from [schema.org](https://schema.org/) JSON-LD on the page. Schema.org data can also be used to automatically [[Obsidian Web Clipper/Templates#Schema.org matching|trigger a template]].
+Schema variables allow you to extract data from [schema.org](https://schema.org/) JSON-LD on the page. Schema.org data can also be used to automatically [[Templates#Schema.org matching|trigger a template]].
 
 - `{{schema:@Type:key}}` returns the value of the key from the schema.
 - `{{schema:@Type:parent.child}}` returns the value of a nested property.

@@ -38,7 +38,7 @@ export const calc = (str: string, param?: string): string => {
 		// Convert input to number
 		const num = Number(str);
 		if (isNaN(num)) {
-			console.error('Input is not a number:', str);
+			console.error('Input is not a number');
 			return str;
 		}
 
@@ -50,7 +50,7 @@ export const calc = (str: string, param?: string): string => {
 		const value = Number(operation.slice(operator === '**' ? 2 : 1));
 		
 		if (isNaN(value)) {
-			console.error('Invalid calculation value:', operation);
+			console.error('Invalid calculation value');
 			return str;
 		}
 
@@ -73,14 +73,14 @@ export const calc = (str: string, param?: string): string => {
 				result = Math.pow(num, value);
 				break;
 			default:
-				console.error('Invalid operator:', operator);
+				console.error('Invalid operator');
 				return str;
 		}
 
 		// Convert to string and remove trailing zeros after decimal
 		return Number(result.toFixed(10)).toString();
-	} catch (error) {
-		console.error('Error in calc filter:', error);
+	} catch {
+		console.error('Error in calc filter');
 		return str;
 	}
-}; 
+};

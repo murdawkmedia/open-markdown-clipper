@@ -1,26 +1,40 @@
 import browser from './browser-polyfill';
-import { Settings, ModelConfig, PropertyType, HistoryEntry, Provider, Rating } from '../types/types';
+import {
+	Settings,
+	PropertyType,
+	HistoryEntry,
+	Rating,
+	ClipAction,
+	ClipStats,
+} from '../types/types';
+import { DestinationKind } from '../destinations/types';
 import { debugLog } from './debug';
-import { copyToClipboard } from 'core/popup';
+import {
+	emptyClipStats,
+	isCanonicalClipStats,
+	migrateClipAction,
+	sanitizeClipStats,
+	saturatingClipCount,
+} from './clip-stats';
+import { createClipHistoryEntry, sanitizeClipHistory } from './clip-history';
+import { ClipRecordingError, sendClipRecordingMessage } from './clip-recorder';
 
-export type { Settings, ModelConfig, PropertyType, HistoryEntry, Provider, Rating };
+export type {
+	Settings,
+	PropertyType,
+	HistoryEntry,
+	Rating,
+	ClipAction,
+	ClipStats,
+};
 
 export let generalSettings: Settings = {
-	vaults: [],
 	betaFeatures: false,
-	legacyMode: false,
-	silentOpen: false,
 	openBehavior: 'popup',
 	highlighterEnabled: true,
 	alwaysShowHighlights: false,
 	highlightBehavior: 'highlight-inline',
 	showMoreActionsButton: false,
-	interpreterModel: '',
-	models: [],
-	providers: [],
-	interpreterEnabled: false,
-	interpreterAutoRun: false,
-	defaultPromptContext: '',
 	propertyTypes: [],
 	readerSettings: {
 		fontSize: 16,
@@ -39,15 +53,11 @@ export let generalSettings: Settings = {
 		highlightActiveLine: true,
 		customCss: ''
 	},
-	stats: {
-		addToObsidian: 0,
-		saveFile: 0,
-		copyToClipboard: 0,
-		share: 0
-	},
-	history: [],
+	stats: emptyClipStats(),
 	ratings: [],
-	saveBehavior: 'addToObsidian'
+	defaultDestination: 'download',
+	customUriTemplate: '',
+	localHttpEndpoint: '',
 };
 
 export function setLocalStorage(key: string, value: any): Promise<void> {
@@ -62,12 +72,12 @@ interface StorageData {
 	general_settings?: {
 		showMoreActionsButton?: boolean;
 		betaFeatures?: boolean;
-		legacyMode?: boolean;
-		silentOpen?: boolean;
-		openBehavior?: boolean | 'popup' | 'embedded';
+		openBehavior?: unknown;
 		saveBehavior?: 'addToObsidian' | 'copyToClipboard' | 'saveFile';
+		defaultDestination?: unknown;
+		customUriTemplate?: unknown;
+		localHttpEndpoint?: unknown;
 	};
-	vaults?: string[];
 	highlighter_settings?: {
 		highlighterEnabled?: boolean;
 		alwaysShowHighlights?: boolean;
@@ -90,50 +100,63 @@ interface StorageData {
 		highlightActiveLine?: boolean;
 		customCss?: string;
 	};
-	interpreter_settings?: {
-		interpreterModel?: string;
-		models?: ModelConfig[];
-		providers?: Provider[];
-		interpreterEnabled?: boolean;
-		interpreterAutoRun?: boolean;
-		defaultPromptContext?: string;
-	};
 	property_types?: PropertyType[];
-	stats?: {
-		addToObsidian: number;
-		saveFile: number;
-		copyToClipboard: number;
-		share: number;
-	};
-	history?: HistoryEntry[];
+	stats?: unknown;
 	ratings?: Rating[];
 	migrationVersion?: number;
+	destinationSecrets?: unknown;
 }
 
-const CURRENT_MIGRATION_VERSION = 1;
+const CURRENT_MIGRATION_VERSION = 4;
+const RETIRED_SYNC_KEYS = ['destinationSecrets', 'interpreter_settings'];
+const RETIRED_LOCAL_KEYS = ['provider_presets'];
+const MAX_DESTINATION_SETTING_LENGTH = 2048;
+const DESTINATION_KINDS: readonly DestinationKind[] = [
+	'clipboard',
+	'download',
+	'custom-uri',
+	'local-http',
+];
+
+function isDestinationKind(value: unknown): value is DestinationKind {
+	return typeof value === 'string' && DESTINATION_KINDS.includes(value as DestinationKind);
+}
+
+function migrateDestination(value: unknown, legacyValue: unknown): DestinationKind {
+	if (isDestinationKind(value)) return value;
+	if (value !== undefined) return 'download';
+	if (legacyValue === 'copyToClipboard') return 'clipboard';
+	if (legacyValue === 'saveFile' || legacyValue === 'addToObsidian') return 'download';
+	return 'download';
+}
+
+function boundedString(value: unknown): string {
+	return typeof value === 'string' ? value.slice(0, MAX_DESTINATION_SETTING_LENGTH) : '';
+}
+
+function sanitizeOpenBehavior(value: unknown): Settings['openBehavior'] {
+	return value === 'reader' ? 'reader' : 'popup';
+}
 
 export async function loadSettings(): Promise<Settings> {
+	await Promise.all([
+		browser.storage.sync.remove(RETIRED_SYNC_KEYS),
+		browser.storage.local.remove(RETIRED_LOCAL_KEYS),
+	]);
 	const data = await browser.storage.sync.get(null) as StorageData;
 	
 	// Load default settings first
 	const defaultSettings: Settings = {
-		vaults: [],
 		showMoreActionsButton: false,
 		betaFeatures: false,
-		legacyMode: false,
-		silentOpen: false,
 		openBehavior: 'popup',
 		highlighterEnabled: true,
 		alwaysShowHighlights: true,
 		highlightBehavior: 'highlight-inline',
-		interpreterModel: '',
-		models: [],
-		providers: [],
-		interpreterEnabled: false,
-		interpreterAutoRun: false,
-		defaultPromptContext: '',
 		propertyTypes: [],
-		saveBehavior: 'addToObsidian',
+		defaultDestination: 'download',
+		customUriTemplate: '',
+		localHttpEndpoint: '',
 		readerSettings: {
 			fontSize: 16,
 			lineHeight: 1.6,
@@ -151,50 +174,46 @@ export async function loadSettings(): Promise<Settings> {
 			highlightActiveLine: true,
 			customCss: ''
 		},
-		stats: {
-			addToObsidian: 0,
-			saveFile: 0,
-			copyToClipboard: 0,
-			share: 0
-		},
-		history: [],
+		stats: emptyClipStats(),
 		ratings: [],
 	};
 
-	// Update migration version if needed
-	if (!data.migrationVersion || data.migrationVersion < CURRENT_MIGRATION_VERSION) {
-		await browser.storage.sync.set({ migrationVersion: CURRENT_MIGRATION_VERSION });
+	const stats = sanitizeClipStats(data.stats);
+	if (
+		!data.migrationVersion
+		|| data.migrationVersion < CURRENT_MIGRATION_VERSION
+		|| !isCanonicalClipStats(data.stats, stats)
+	) {
+		await browser.storage.sync.set({
+			migrationVersion: CURRENT_MIGRATION_VERSION,
+			stats,
+		});
 		debugLog('Settings', `Updated migration version to ${CURRENT_MIGRATION_VERSION}`);
 	}
 
-	// Validate and sanitize data to prevent corruption
-	const sanitizedVaults = Array.isArray(data.vaults) ? data.vaults.filter(v => typeof v === 'string') : [];
-	const sanitizedModels = Array.isArray(data.interpreter_settings?.models) 
-		? data.interpreter_settings.models.filter(m => m && typeof m === 'object' && typeof m.id === 'string') 
-		: [];
-	const sanitizedProviders = Array.isArray(data.interpreter_settings?.providers) 
-		? data.interpreter_settings.providers.filter(p => p && typeof p === 'object' && typeof p.id === 'string') 
-		: [];
+	const defaultDestination = migrateDestination(
+		data.general_settings?.defaultDestination,
+		data.general_settings?.saveBehavior,
+	);
+	const storedOpenBehavior = data.general_settings?.openBehavior;
+	const openBehavior = sanitizeOpenBehavior(storedOpenBehavior);
+	if (storedOpenBehavior !== undefined && storedOpenBehavior !== openBehavior) {
+		await browser.storage.sync.set({
+			general_settings: {
+				...data.general_settings,
+				openBehavior,
+			},
+		});
+	}
 
 	// Load user settings
 	const loadedSettings: Settings = {
-		vaults: sanitizedVaults.length > 0 ? sanitizedVaults : defaultSettings.vaults,
 		showMoreActionsButton: data.general_settings?.showMoreActionsButton ?? defaultSettings.showMoreActionsButton,
 		betaFeatures: data.general_settings?.betaFeatures ?? defaultSettings.betaFeatures,
-		legacyMode: data.general_settings?.legacyMode ?? defaultSettings.legacyMode,
-		silentOpen: data.general_settings?.silentOpen ?? defaultSettings.silentOpen,
-		openBehavior: typeof data.general_settings?.openBehavior === 'boolean' 
-			? (data.general_settings.openBehavior ? 'embedded' : 'popup') 
-			: (data.general_settings?.openBehavior ?? defaultSettings.openBehavior),
+		openBehavior,
 		highlighterEnabled: data.highlighter_settings?.highlighterEnabled ?? defaultSettings.highlighterEnabled,
 		alwaysShowHighlights: data.highlighter_settings?.alwaysShowHighlights ?? defaultSettings.alwaysShowHighlights,
 		highlightBehavior: data.highlighter_settings?.highlightBehavior ?? defaultSettings.highlightBehavior,
-		interpreterModel: data.interpreter_settings?.interpreterModel || defaultSettings.interpreterModel,
-		models: sanitizedModels,
-		providers: sanitizedProviders,
-		interpreterEnabled: data.interpreter_settings?.interpreterEnabled ?? defaultSettings.interpreterEnabled,
-		interpreterAutoRun: data.interpreter_settings?.interpreterAutoRun ?? defaultSettings.interpreterAutoRun,
-		defaultPromptContext: data.interpreter_settings?.defaultPromptContext || defaultSettings.defaultPromptContext,
 		propertyTypes: data.property_types || defaultSettings.propertyTypes,
 		readerSettings: {
 			fontSize: data.reader_settings?.fontSize ?? defaultSettings.readerSettings.fontSize,
@@ -213,44 +232,49 @@ export async function loadSettings(): Promise<Settings> {
 			highlightActiveLine: data.reader_settings?.highlightActiveLine ?? defaultSettings.readerSettings.highlightActiveLine,
 			customCss: data.reader_settings?.customCss ?? defaultSettings.readerSettings.customCss
 		},
-		stats: data.stats || defaultSettings.stats,
-		history: data.history || defaultSettings.history,
+		stats,
 		ratings: data.ratings || defaultSettings.ratings,
-		saveBehavior: data.general_settings?.saveBehavior ?? defaultSettings.saveBehavior
+		defaultDestination,
+		customUriTemplate: boundedString(data.general_settings?.customUriTemplate),
+		localHttpEndpoint: boundedString(data.general_settings?.localHttpEndpoint),
 	};
 
 	generalSettings = loadedSettings;
-	debugLog('Settings', 'Loaded settings:', generalSettings);
+	debugLog('Settings', 'Loaded settings');
 	return generalSettings;
 }
 
 export async function saveSettings(settings?: Partial<Settings>): Promise<void> {
 	if (settings) {
-		generalSettings = { ...generalSettings, ...settings };
+		const { stats: _backgroundOwnedStats, ...ordinarySettings } = settings;
+		generalSettings = { ...generalSettings, ...ordinarySettings };
 	}
+	generalSettings.defaultDestination = migrateDestination(
+		generalSettings.defaultDestination,
+		undefined,
+	);
+	generalSettings.openBehavior = sanitizeOpenBehavior(generalSettings.openBehavior);
+	generalSettings.customUriTemplate = boundedString(generalSettings.customUriTemplate);
+	generalSettings.localHttpEndpoint = boundedString(generalSettings.localHttpEndpoint);
+	generalSettings.stats = sanitizeClipStats(generalSettings.stats);
 
+	await Promise.all([
+		browser.storage.sync.remove(RETIRED_SYNC_KEYS),
+		browser.storage.local.remove(RETIRED_LOCAL_KEYS),
+	]);
 	await browser.storage.sync.set({
-		vaults: generalSettings.vaults,
 		general_settings: {
 			showMoreActionsButton: generalSettings.showMoreActionsButton,
 			betaFeatures: generalSettings.betaFeatures,
-			legacyMode: generalSettings.legacyMode,
-			silentOpen: generalSettings.silentOpen,
 			openBehavior: generalSettings.openBehavior,
-			saveBehavior: generalSettings.saveBehavior,
+			defaultDestination: generalSettings.defaultDestination,
+			customUriTemplate: generalSettings.customUriTemplate,
+			localHttpEndpoint: generalSettings.localHttpEndpoint,
 		},
 		highlighter_settings: {
 			highlighterEnabled: generalSettings.highlighterEnabled,
 			alwaysShowHighlights: generalSettings.alwaysShowHighlights,
 			highlightBehavior: generalSettings.highlightBehavior
-		},
-		interpreter_settings: {
-			interpreterModel: generalSettings.interpreterModel,
-			models: generalSettings.models,
-			providers: generalSettings.providers,
-			interpreterEnabled: generalSettings.interpreterEnabled,
-			interpreterAutoRun: generalSettings.interpreterAutoRun,
-			defaultPromptContext: generalSettings.defaultPromptContext
 		},
 		property_types: generalSettings.propertyTypes,
 		reader_settings: {
@@ -269,86 +293,74 @@ export async function saveSettings(settings?: Partial<Settings>): Promise<void> 
 			autoScroll: generalSettings.readerSettings.autoScroll,
 			highlightActiveLine: generalSettings.readerSettings.highlightActiveLine,
 			customCss: generalSettings.readerSettings.customCss
-		},
-		stats: generalSettings.stats
+		}
 	});
 }
 
-export async function setLegacyMode(enabled: boolean): Promise<void> {
-	await saveSettings({ legacyMode: enabled });
-	console.log(`Legacy mode ${enabled ? 'enabled' : 'disabled'}`);
-}
-
 export async function incrementStat(
-	action: keyof Settings['stats'],
-	vault?: string,
-	path?: string,
+	action: ClipAction,
 	url?: string,
 	title?: string
 ): Promise<void> {
-	const settings = await loadSettings();
-	settings.stats[action]++;
-	await saveSettings(settings);
+	await sendClipRecordingMessage(action, url, title);
+}
 
-	// Add history entry if URL is provided
-	if (url) {
-		await addHistoryEntry(action, url, title, vault, path);
+/** Background-only storage effect. Production callers use incrementStat(). */
+export async function recordClipInStorage(
+	action: ClipAction,
+	url?: string,
+	title?: string
+): Promise<void> {
+	const normalizedAction = migrateClipAction(action);
+	if (!normalizedAction || (title !== undefined && url === undefined)) {
+		throw new ClipRecordingError();
 	}
+	const entry = url === undefined
+		? undefined
+		: createClipHistoryEntry(normalizedAction, url, title);
+	if (url !== undefined && !entry) throw new ClipRecordingError();
+
+	const stored = await browser.storage.sync.get([
+		'stats',
+		'migrationVersion',
+	]) as Pick<StorageData, 'stats' | 'migrationVersion'>;
+	const stats = sanitizeClipStats(stored.stats);
+	stats[normalizedAction] = saturatingClipCount(stats[normalizedAction], 1);
+	const migrationVersion = typeof stored.migrationVersion === 'number'
+		&& Number.isSafeInteger(stored.migrationVersion)
+		&& stored.migrationVersion > CURRENT_MIGRATION_VERSION
+		? stored.migrationVersion
+		: CURRENT_MIGRATION_VERSION;
+	await browser.storage.sync.set({ stats, migrationVersion });
+
+	if (entry) await persistHistoryEntry(entry);
 }
 
 export async function addHistoryEntry(
-	action: keyof Settings['stats'], 
+	action: ClipAction,
 	url: string, 
-	title?: string,
-	vault?: string,
-	path?: string
+	title?: string
 ): Promise<void> {
-	const entry: HistoryEntry = {
-		datetime: new Date().toISOString(),
-		url,
-		action,
-		title,
-		vault,
-		path
-	};
+	const normalizedAction = migrateClipAction(action);
+	const entry = normalizedAction
+		? createClipHistoryEntry(normalizedAction, url, title)
+		: null;
+	if (!entry) throw new ClipRecordingError();
+	await persistHistoryEntry(entry);
+}
 
-	// Get existing history from local storage
+async function persistHistoryEntry(entry: HistoryEntry): Promise<void> {
 	const result = await browser.storage.local.get('history');
-	const history: HistoryEntry[] = (result.history || []) as HistoryEntry[];
-
-	// Add new entry at the beginning
+	const { history } = sanitizeClipHistory(result.history);
 	history.unshift(entry);
-
-	// Keep only the last 1000 entries
-	const trimmedHistory = history.slice(0, 1000);
-
-	// Save back to local storage
-	await browser.storage.local.set({ history: trimmedHistory });
+	await browser.storage.local.set({ history: history.slice(0, 1000) });
 }
 
 export async function getClipHistory(): Promise<HistoryEntry[]> {
 	const result = await browser.storage.local.get('history');
-	return (result.history || []) as HistoryEntry[];
-}
-
-declare global {
-	interface Window {
-		debugStorage: (key?: string) => Promise<Record<string, unknown>>;
+	const { history, changed } = sanitizeClipHistory(result.history);
+	if (changed) {
+		await browser.storage.local.set({ history });
 	}
-}
-
-// Make storage accessible from console — use `window.debugStorage()` to see all sync storage, or `window.debugStorage(key)` to see a specific key
-if (typeof window !== 'undefined') {
-	window.debugStorage = (key?: string) => {
-		if (key) {
-			return browser.storage.sync.get(key).then(data => {
-				console.log(`Sync storage contents for key "${key}":`, data);
-				return data;
-			});
-		}
-		return browser.storage.sync.get(null).then(data => {
-			console.log('Sync storage contents:', data);
-			return data;
-		});
-	};
+	return history;
 }

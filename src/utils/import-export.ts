@@ -11,6 +11,7 @@ import { saveFile } from './file-utils';
 import { copyToClipboard } from './clipboard-utils';
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 import { getMessage } from './i18n';
+import { sanitizeClipStats } from './clip-stats';
 
 const SCHEMA_VERSION = '0.1.0';
 
@@ -18,6 +19,221 @@ const SCHEMA_VERSION = '0.1.0';
 interface StorageData {
 	[key: string]: any;
 	template_list?: string[];
+}
+
+function record(value: unknown): Record<string, any> {
+	return value && typeof value === 'object' && !Array.isArray(value)
+		? value as Record<string, any>
+		: {};
+}
+
+function omitRetiredTemplateContext(value: unknown): Partial<Template> {
+	const { context: _retiredContext, ...template } = record(value);
+	return template as Partial<Template>;
+}
+
+function text(value: unknown, maxLength: number): string | undefined {
+	return typeof value === 'string' ? value.slice(0, maxLength) : undefined;
+}
+
+function finiteNumber(value: unknown, min: number, max: number): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
+		? value
+		: undefined;
+}
+
+function sanitizeGeneralSettings(value: unknown): Record<string, any> {
+	const input = record(value);
+	const destinations = ['clipboard', 'download', 'custom-uri', 'local-http'];
+	const openBehaviors = ['popup', 'reader'];
+	return {
+		showMoreActionsButton: typeof input.showMoreActionsButton === 'boolean' ? input.showMoreActionsButton : false,
+		betaFeatures: typeof input.betaFeatures === 'boolean' ? input.betaFeatures : false,
+		openBehavior: openBehaviors.includes(input.openBehavior) ? input.openBehavior : 'popup',
+		defaultDestination: destinations.includes(input.defaultDestination) ? input.defaultDestination : 'download',
+		customUriTemplate: text(input.customUriTemplate, 2048) ?? '',
+		localHttpEndpoint: text(input.localHttpEndpoint, 2048) ?? '',
+	};
+}
+
+function sanitizeHighlighterSettings(value: unknown): Record<string, any> {
+	const input = record(value);
+	return {
+		highlighterEnabled: typeof input.highlighterEnabled === 'boolean' ? input.highlighterEnabled : false,
+		alwaysShowHighlights: typeof input.alwaysShowHighlights === 'boolean' ? input.alwaysShowHighlights : false,
+		highlightBehavior: text(input.highlightBehavior, 64) ?? 'highlight-inline',
+	};
+}
+
+function sanitizeReaderSettings(value: unknown): Record<string, any> {
+	const input = record(value);
+	const output: Record<string, any> = {};
+	for (const key of ['fontSize', 'lineHeight', 'maxWidth'] as const) {
+		const sanitized = finiteNumber(input[key], 0, 10_000);
+		if (sanitized !== undefined) output[key] = sanitized;
+	}
+	for (const key of ['lightTheme', 'darkTheme', 'defaultFont'] as const) {
+		const sanitized = text(input[key], 128);
+		if (sanitized !== undefined) output[key] = sanitized;
+	}
+	if (['auto', 'light', 'dark'].includes(input.appearance)) output.appearance = input.appearance;
+	if (Array.isArray(input.fonts)) {
+		output.fonts = input.fonts
+			.filter((font: unknown): font is string => typeof font === 'string')
+			.slice(0, 100)
+			.map((font: string) => font.slice(0, 128));
+	}
+	for (const key of [
+		'blendImages',
+		'colorLinks',
+		'followLinks',
+		'pinPlayer',
+		'autoScroll',
+		'highlightActiveLine',
+	] as const) {
+		if (typeof input[key] === 'boolean') output[key] = input[key];
+	}
+	const customCss = text(input.customCss, 100_000);
+	if (customCss !== undefined) output.customCss = customCss;
+	return output;
+}
+
+function sanitizePropertyTypes(value: unknown): Record<string, any>[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((property) => record(property))
+		.filter((property) => typeof property.name === 'string' && typeof property.type === 'string')
+		.slice(0, 256)
+		.map((property) => {
+			const safe: Record<string, any> = {
+				name: property.name.slice(0, 512),
+				type: property.type.slice(0, 64),
+			};
+			const defaultValue = text(property.defaultValue, 100_000);
+			if (defaultValue !== undefined) safe.defaultValue = defaultValue;
+			return safe;
+		});
+}
+
+function sanitizeTemplateIds(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const seen = new Set<string>();
+	return value.filter((id): id is string => {
+		if (
+			typeof id !== 'string'
+			|| id.length === 0
+			|| id.length > 128
+			|| !/^[a-z0-9_-]+$/i.test(id)
+			|| seen.has(id)
+		) return false;
+		seen.add(id);
+		return true;
+	});
+}
+
+function sanitizeTemplate(value: unknown, id: string): Record<string, any> | null {
+	const input = record(value);
+	const name = text(input.name, 512);
+	const noteNameFormat = text(input.noteNameFormat, 2048);
+	const path = text(input.path, 2048);
+	const noteContentFormat = text(input.noteContentFormat, 1_000_000);
+	const behaviors = [
+		'create',
+		'append-specific',
+		'append-daily',
+		'prepend-specific',
+		'prepend-daily',
+		'overwrite',
+	];
+	if (
+		name === undefined
+		|| noteNameFormat === undefined
+		|| path === undefined
+		|| noteContentFormat === undefined
+		|| !behaviors.includes(input.behavior)
+		|| !Array.isArray(input.properties)
+	) return null;
+
+	const properties = input.properties
+		.map((property: unknown) => record(property))
+		.filter((property: Record<string, any>) => (
+			typeof property.name === 'string' && typeof property.value === 'string'
+		))
+		.slice(0, 256)
+		.map((property: Record<string, any>) => {
+			const safe: Record<string, any> = {
+				name: property.name.slice(0, 512),
+				value: property.value.slice(0, 1_000_000),
+			};
+			const propertyId = text(property.id, 128);
+			if (propertyId !== undefined) safe.id = propertyId;
+			const propertyType = text(property.type, 64);
+			if (propertyType !== undefined) safe.type = propertyType;
+			return safe;
+		});
+
+	const safe: Record<string, any> = {
+		id,
+		name,
+		behavior: input.behavior,
+		noteNameFormat,
+		path,
+		noteContentFormat,
+		properties,
+	};
+	if (Array.isArray(input.triggers)) {
+		safe.triggers = input.triggers
+			.filter((trigger: unknown): trigger is string => typeof trigger === 'string')
+			.slice(0, 256)
+			.map((trigger: string) => trigger.slice(0, 2048));
+	}
+	return safe;
+}
+
+function decodeAndSanitizeTemplate(value: unknown, id: string): Record<string, any> | null {
+	let decoded = value;
+	if (Array.isArray(value)) {
+		if (
+			value.length === 0
+			|| value.length > 256
+			|| !value.every((chunk) => typeof chunk === 'string' && chunk.length <= 8000)
+		) return null;
+		try {
+			const decompressed = decompressFromUTF16((value as string[]).join(''));
+			if (typeof decompressed !== 'string' || decompressed.length > 2_000_000) return null;
+			decoded = JSON.parse(decompressed);
+		} catch {
+			return null;
+		}
+	}
+	return sanitizeTemplate(decoded, id);
+}
+
+export function createSettingsExportData(source: StorageData): StorageData {
+	const exported: StorageData = {
+		general_settings: sanitizeGeneralSettings(source.general_settings),
+		highlighter_settings: sanitizeHighlighterSettings(source.highlighter_settings),
+		reader_settings: sanitizeReaderSettings(source.reader_settings),
+		property_types: sanitizePropertyTypes(source.property_types),
+		stats: sanitizeClipStats(source.stats),
+	};
+
+	const templateIds = sanitizeTemplateIds(source.template_list);
+	const exportedTemplateIds: string[] = [];
+	for (const id of templateIds) {
+		const key = `template_${id}`;
+		if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+		const template = decodeAndSanitizeTemplate(source[key], id);
+		if (!template) continue;
+		exported[key] = template;
+		exportedTemplateIds.push(id);
+	}
+	exported.template_list = exportedTemplateIds;
+	return exported;
+}
+
+export function createSettingsImportData(source: StorageData): StorageData {
+	return createSettingsExportData(source);
 }
 
 export async function exportTemplate(): Promise<void> {
@@ -51,18 +267,13 @@ export async function exportTemplate(): Promise<void> {
 		orderedTemplate.path = template.path;
 	}
 
-	// Include context only if it has a value
-	if (template.context) {
-		orderedTemplate.context = template.context;
-	}
-
 	const content = JSON.stringify(orderedTemplate, null, '\t');
 	
 	await saveFile({
 		content,
 		fileName,
 		mimeType: 'application/json',
-		onError: (error) => console.error('Failed to export template:', error)
+		onError: () => undefined
 	});
 }
 
@@ -77,9 +288,7 @@ export function importTemplate(input?: HTMLInputElement): void {
 		const reader = new FileReader();
 		reader.onload = async (e: ProgressEvent<FileReader>) => {
 			try {
-				const importedTemplate = JSON.parse(e.target?.result as string) as Partial<Template>;
-				console.log('Imported template:', importedTemplate);
-
+				const importedTemplate = omitRetiredTemplateContext(JSON.parse(e.target?.result as string));
 				if (!validateImportedTemplate(importedTemplate)) {
 					throw new Error('Invalid template file');
 				}
@@ -89,13 +298,11 @@ export function importTemplate(input?: HTMLInputElement): void {
 				// Handle property types and preserve existing IDs or generate new ones
 				if (importedTemplate.properties) {
 					importedTemplate.properties = await Promise.all(importedTemplate.properties.map(async (prop: any) => {
-						console.log('Processing property:', prop);
 						// Add or update the property type
 						await addPropertyType(prop.name, prop.type || 'text', prop.value || '');
 						
 						// Use the type from generalSettings, which will be either the existing type or the newly added one
 						const type = generalSettings.propertyTypes.find(pt => pt.name === prop.name)?.type || 'text';
-						console.log(`Property ${prop.name} type after processing:`, type);
 						return {
 							id: prop.id || (Date.now().toString() + Math.random().toString(36).slice(2, 9)),
 							name: prop.name,
@@ -105,13 +312,6 @@ export function importTemplate(input?: HTMLInputElement): void {
 					}));
 				}
 
-				console.log('Processed template properties:', importedTemplate.properties);
-
-				// Keep the context if it exists in the imported template
-				if (importedTemplate.context) {
-					importedTemplate.context = importedTemplate.context;
-				}
-
 				let newName = importedTemplate.name as string;
 				let counter = 1;
 				while (templates.some(t => t.name === newName)) {
@@ -119,15 +319,13 @@ export function importTemplate(input?: HTMLInputElement): void {
 				}
 				importedTemplate.name = newName;
 
-				console.log('Final imported template:', importedTemplate);
 				templates.unshift(importedTemplate as Template);
 
 				saveTemplateSettings();
 				updateTemplateList();
 				showTemplateEditor(importedTemplate as Template);
 				hideModal(document.getElementById('import-modal'));
-			} catch (error) {
-				console.error('Error parsing imported template:', error);
+			} catch {
 				alert(getMessage('failedToImportTemplate'));
 			}
 		};
@@ -164,10 +362,7 @@ function validateImportedTemplate(template: Partial<Template>): boolean {
 	// Check for noteNameFormat and path only if it's not a daily note template
 	const hasValidNoteNameAndPath = isDailyNote || (template.hasOwnProperty('noteNameFormat') && template.hasOwnProperty('path'));
 
-	// Add optional check for context
-	const hasValidContext = !template.context || typeof template.context === 'string';
-
-	return hasRequiredFields && hasValidProperties && hasValidNoteNameAndPath && hasValidContext;
+	return hasRequiredFields && hasValidProperties && hasValidNoteNameAndPath;
 }
 
 function preventDefaults(e: Event): void {
@@ -189,8 +384,7 @@ function handleFiles(files: FileList): void {
 }
 
 async function processImportedTemplate(importedTemplate: Partial<Template>): Promise<Template> {
-	console.log('Processing imported template:', importedTemplate);
-
+	importedTemplate = omitRetiredTemplateContext(importedTemplate);
 	if (!validateImportedTemplate(importedTemplate)) {
 		throw new Error('Invalid template file');
 	}
@@ -199,15 +393,12 @@ async function processImportedTemplate(importedTemplate: Partial<Template>): Pro
 	
 	// Process property types
 	if (importedTemplate.properties) {
-		console.log('Processing properties:', importedTemplate.properties);
 		for (const prop of importedTemplate.properties) {
-			console.log(`Processing property: ${prop.name}, type: ${prop.type || 'text'}, value: ${prop.value}`);
 			const existingPropertyType = generalSettings.propertyTypes.find(pt => pt.name === prop.name);
 			if (!existingPropertyType) {
 				// Only add the property type if it doesn't exist
 				await addPropertyType(prop.name, prop.type || 'text', prop.value || '');
 			} else {
-				console.log(`Property type ${prop.name} already exists, keeping existing type: ${existingPropertyType.type}`);
 			}
 		}
 		
@@ -223,8 +414,6 @@ async function processImportedTemplate(importedTemplate: Partial<Template>): Pro
 		});
 	}
 
-	console.log('Processed template properties:', importedTemplate.properties);
-
 	// Ensure unique name
 	let newName = importedTemplate.name as string;
 	let counter = 1;
@@ -233,7 +422,6 @@ async function processImportedTemplate(importedTemplate: Partial<Template>): Pro
 	}
 	importedTemplate.name = newName;
 
-	console.log('Final imported template:', importedTemplate);
 	return importedTemplate as Template;
 }
 
@@ -241,17 +429,14 @@ export function importTemplateFile(file: File): void {
 	const reader = new FileReader();
 	reader.onload = async (e: ProgressEvent<FileReader>) => {
 		try {
-			console.log('Starting template import');
-			const importedTemplate = JSON.parse(e.target?.result as string) as Partial<Template>;
+			const importedTemplate = omitRetiredTemplateContext(JSON.parse(e.target?.result as string));
 			const processedTemplate = await processImportedTemplate(importedTemplate);
 			
 			templates.unshift(processedTemplate);
 			await saveTemplateSettings();
 			updateTemplateList();
 			showTemplateEditor(processedTemplate);
-			console.log('Template import completed');
-		} catch (error) {
-			console.error('Error parsing imported template:', error);
+		} catch {
 			alert(getMessage('failedToImportTemplate'));
 		}
 	};
@@ -270,15 +455,14 @@ export function showTemplateImportModal(): void {
 
 async function importTemplateFromJson(jsonContent: string): Promise<void> {
 	try {
-		const importedTemplate = JSON.parse(jsonContent) as Partial<Template>;
+		const importedTemplate = omitRetiredTemplateContext(JSON.parse(jsonContent));
 		const processedTemplate = await processImportedTemplate(importedTemplate);
 		
 		templates.unshift(processedTemplate);
 		await saveTemplateSettings();
 		updateTemplateList();
 		showTemplateEditor(processedTemplate);
-	} catch (error) {
-		console.error('Error parsing imported template:', error);
+	} catch {
 		throw new Error('Error importing template. Please check the file and try again.');
 	}
 }
@@ -305,11 +489,6 @@ export function copyTemplateToClipboard(template: Template): void {
 		orderedTemplate.path = template.path;
 	}
 
-	// Include context only if it has a value
-	if (template.context) {
-		orderedTemplate.context = template.context;
-	}
-
 	const jsonContent = JSON.stringify(orderedTemplate, null, 2);
 	
 	copyToClipboard(
@@ -324,14 +503,9 @@ export function copyTemplateToClipboard(template: Template): void {
 }
 
 export async function exportAllSettings(): Promise<void> {
-	console.log('Starting exportAllSettings function');
 	try {
-		console.log('Fetching all data from browser storage');
 		const allData = await browser.storage.sync.get(null) as StorageData;
-		console.log('All data fetched:', allData);
-
-		// Create a copy of the data to modify
-		const exportData: StorageData = { ...allData };
+		const exportData = createSettingsExportData(allData);
 
 		// Decompress all templates
 		const templateIds = exportData.template_list || [];
@@ -343,28 +517,20 @@ export async function exportAllSettings(): Promise<void> {
 					const compressedData = (exportData[key] as string[]).join('');
 					const decompressedData = decompressFromUTF16(compressedData);
 					exportData[key] = JSON.parse(decompressedData);
-				} catch (error) {
-					console.error(`Failed to decompress template ${id}:`, error);
-				}
+				} catch {}
 			}
 		}
 
-		console.log('Data prepared for export:', exportData);
 		const content = JSON.stringify(exportData, null, 2);
-		console.log('Data stringified, length:', content.length);
-
-		const fileName = 'obsidian-web-clipper-settings.json';
+		const fileName = 'open-markdown-clipper-settings.json';
 
 		await saveFile({
 			content,
 			fileName,
 			mimeType: 'application/json',
-			onError: (error) => console.error('Failed to export settings:', error)
+			onError: () => undefined
 		});
-
-		console.log('Export completed successfully');
-	} catch (error) {
-		console.error('Error in exportAllSettings:', error);
+	} catch {
 		alert(getMessage('failedToExportSettings'));
 	}
 }
@@ -384,8 +550,7 @@ async function importAllSettingsFromJson(jsonContent: string): Promise<void> {
 		const settings = JSON.parse(jsonContent) as StorageData;
 		
 		if (confirm(getMessage('confirmReplaceSettings'))) {
-			// Create a copy of the settings to modify
-			const importData: StorageData = { ...settings };
+			const importData = createSettingsImportData(settings);
 			
 			// Compress all templates
 			const templateIds = importData.template_list || [];
@@ -410,9 +575,7 @@ async function importAllSettingsFromJson(jsonContent: string): Promise<void> {
 							}
 							importData[key] = chunks;
 						}
-					} catch (error) {
-						console.error(`Failed to process template ${id}:`, error);
-					}
+					} catch {}
 				}
 			}
 
@@ -424,8 +587,7 @@ async function importAllSettingsFromJson(jsonContent: string): Promise<void> {
 			updatePropertyTypesList();
 			alert(getMessage('settingsImportSuccess'));
 		}
-	} catch (error) {
-		console.error('Error importing all settings:', error);
+	} catch {
 		throw new Error('Error importing settings. Please check the file and try again.');
 	}
 }

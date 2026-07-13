@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+	<title id="title">Open Markdown Clipper</title>
+	<desc id="description">A teal download arrow on a dark document tile</desc>
+	<rect x="8" y="8" width="112" height="112" rx="26" fill="#0b1f2a"/>
+	<path d="M36 23h38l19 19v63H36z" fill="#153541"/>
+	<path d="M74 23v19h19z" fill="#24515b"/>
+	<path d="M64 45v35" fill="none" stroke="#2dd4bf" stroke-width="10" stroke-linecap="round"/>
+	<path d="m49 67 15 15 15-15" fill="none" stroke="#2dd4bf" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+	<path d="M48 96h32" fill="none" stroke="#5eead4" stroke-width="6" stroke-linecap="round"/>
+</svg>

@@ -1,8 +1,8 @@
 // Shared content styles for reader and highlights views.
-// These apply inside any element with .obsidian-reader-active.
+// These apply inside any element with .open-markdown-clipper-reader-active.
 // Individual content type files are in the reader/ directory.
 
-.obsidian-reader-active {
+.open-markdown-clipper-reader-active {
 	--dynamic-font-size: calc(var(--font-text-size) + 0.25vw);
 
 	// Headings

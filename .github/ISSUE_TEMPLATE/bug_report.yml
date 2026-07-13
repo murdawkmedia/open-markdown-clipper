@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a bug in Web Clipper. Please review troubleshooting steps before submitting.
+description: Report a bug in Open Markdown Clipper. Please review troubleshooting steps before submitting.
 title: "BUG: "
 labels: ["bug"]
 body:
@@ -10,7 +10,7 @@ body:
       label: Is this issue related to missing content or incorrect conversion to Markdown?
       description: Web Clipper uses [Defuddle](https://github.com/kepano/defuddle) to convert web pages to Markdown. If the issue is related to missing content or incorrect content, please open the issue on the [Defuddle](https://github.com/kepano/defuddle) repo, not here.
       options:
-        - label: No. This is definitely a Web Clipper bug.
+        - label: No. This is definitely an Open Markdown Clipper bug.
           required: true
 
   - type: checkboxes
@@ -18,7 +18,7 @@ body:
     attributes:
       label: Have you reviewed the troubleshooting instructions?
       options:
-        - label: I have reviewed the [Troubleshooting instructions](https://help.obsidian.md/web-clipper/troubleshoot).
+        - label: I have reviewed the [Troubleshooting instructions](https://github.com/murdawkmedia/open-markdown-clipper/blob/main/docs/Troubleshoot%20Open%20Markdown%20Clipper.md).
           required: true
 
   - type: input
@@ -33,23 +33,15 @@ body:
     id: browser
     attributes:
       label: Browser
-      placeholder: e.g. Chrome 124, Firefox 126, Safari 17
+      placeholder: e.g. Chrome 124 or Firefox 126
     validations:
       required: true
 
   - type: input
     id: clipper-version
     attributes:
-      label: Web Clipper version
-      placeholder: e.g. 0.9.5
-    validations:
-      required: true
-
-  - type: input
-    id: obsidian-version
-    attributes:
-      label: Obsidian version
-      placeholder: e.g. 1.7.5
+      label: Open Markdown Clipper version
+      placeholder: e.g. 0.1.0
     validations:
       required: true
 
@@ -94,7 +86,7 @@ body:
     id: template
     attributes:
       label: Your template file
-      description: If you are using a custom template (i.e. not the Default template), go to Web Clipper settings and click **More** → **Copy as JSON**. Paste the JSON code below.
+      description: If you are using a custom template (i.e. not the Default template), go to Open Markdown Clipper settings and click **More** → **Copy as JSON**. Paste the JSON code below.
       render: json
     validations:
       required: false

@@ -1,5 +1,5 @@
 
-.obsidian-reader-outline {
+.open-markdown-clipper-reader-outline {
 	font-family: var(--font-ui);
 	box-sizing: border-box;
 	background: var(--background-primary);
@@ -17,7 +17,7 @@
 		display: none;
 	}
 }
-.obsidian-reader-outline-item {
+.open-markdown-clipper-reader-outline-item {
 	color: var(--text-muted);
 	cursor: pointer;
 	text-wrap-style: pretty;
@@ -43,14 +43,14 @@
 		padding-left: 72px;
 	}
 }
-.obsidian-reader-outline-item:hover {
+.open-markdown-clipper-reader-outline-item:hover {
 	color: var(--text-normal);
 }
-.obsidian-reader-outline-item.active {
+.open-markdown-clipper-reader-outline-item.active {
 	color: var(--text-normal);
 	transition: color 0.1s ease;
 }
-.obsidian-reader-outline-item.in-progress {
+.open-markdown-clipper-reader-outline-item.in-progress {
 	position: relative;
 	&::before {
 		content: '';
@@ -63,19 +63,19 @@
 		mix-blend-mode: var(--mix-blend-mode);
 	}
 }
-.obsidian-reader-outline-item.faint {
+.open-markdown-clipper-reader-outline-item.faint {
 	color: var(--text-faint);
 }
-.obsidian-reader-outline-item.faint:hover {
+.open-markdown-clipper-reader-outline-item.faint:hover {
 	color: var(--text-muted);
 }
 
-.obsidian-reader-outline-overlay {
+.open-markdown-clipper-reader-outline-overlay {
 	display: none;
 }
 
 @media (max-width: 768px) {
-	.obsidian-reader-outline-overlay {
+	.open-markdown-clipper-reader-outline-overlay {
 		position: fixed;
 		top: 0;
 		left: 0;
@@ -90,7 +90,7 @@
 		&.is-open {
 			display: block;
 		}
-		.obsidian-reader-outline-item {
+		.open-markdown-clipper-reader-outline-item {
 			padding-block: 10px;
 			font-size: 0.95em;
             max-width: 100%;

@@ -2,7 +2,7 @@
 permalink: web-clipper/logic
 description: Use conditionals, loops, and variable assignment in Web Clipper templates.
 ---
-[[Introduction to Obsidian Web Clipper|Web Clipper]] supports template logic for conditionals, loops, and variable assignment. This syntax is inspired by [Twig](https://twig.symfony.com/) and [Liquid](https://shopify.github.io/liquid/) templating languages.
+[[Introduction to Open Markdown Clipper|Web Clipper]] supports template logic for conditionals, loops, and variable assignment. This syntax is inspired by [Twig](https://twig.symfony.com/) and [Liquid](https://shopify.github.io/liquid/) templating languages.
 
 ## Conditionals
 
@@ -241,9 +241,5 @@ Conditionals and loops can be combined:
 
 ## Evaluation order
 
-Template logic is processed in the following order:
-
-1. **Template logic** — `{% if %}`, `{% for %}`, `{% set %}`, and `{{variables}}` are evaluated first
-2. **Prompt variables** — [[Variables#Prompt variables|Prompt variables]] like `{{"summarize this"|prompt}}` are sent to the Interpreter after template logic is complete
-
-This means you can use template logic to construct prompts dynamically, but prompt results are not available for use in conditionals or loops.
+Template logic, including `{% if %}`, `{% for %}`, `{% set %}`, and
+`{{variables}}`, is evaluated as a single local rendering pass.

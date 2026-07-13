@@ -1,7 +1,7 @@
 ---
 permalink: web-clipper/filters
 ---
-Filters allow you to modify [[variables]] in [[Obsidian Web Clipper/Templates|Web Clipper templates]]. Filters are applied to variables using the syntax `{{variable|filter}}`.
+Filters allow you to modify [[variables]] in [[Templates|Web Clipper templates]]. Filters are applied to variables using the syntax `{{variable|filter}}`.
 
 - Filters work for any kind of [[Variables|variable]] including `prompt`, `meta`, `selector`, and `schema` variables.
 - Filters can be chained, e.g. `{{variable|filter1|filter2}}`, and are applied in the order they are added.
@@ -179,7 +179,7 @@ Converts an array or array of objects into a [[Advanced formatting syntax#Tables
 
 ### `wikilink`
 
-Converts strings, arrays, or objects into Obsidian [[Link notes|wikilink]] syntax.
+Converts strings, arrays, or objects into portable `[[wikilink]]` syntax.
 
 - For strings: `"page"|wikilink` returns `[[page]]`.
 - For strings with alias: `"page"|wikilink:"alias"` returns `[[page|alias]]`.
@@ -219,7 +219,7 @@ Process HTML content and convert HTML to Markdown. Note that your input [[Variab
 
 ### `markdown` 
 
-Converts a string to an [[Obsidian Flavored Markdown]] formatted string.
+Converts an HTML string to Markdown.
 
 - Useful when combined with variables that return HTML such as `{{contentHtml}}`, `{{fullHtml}}`, and selector variables like `{{selectorHtml:cssSelector}}`.
 
@@ -301,8 +301,8 @@ Returns the last element of an array as a string.
 
 Applies a transformation to each element of an array using the syntax `map:item => item.property` or `map:item => item.nested.property` for nested properties.
 
-- `[{gem: "obsidian", color: "black"}, {gem: "amethyst", color: "purple"}]|map:item => item.gem` returns `["obsidian", "amethyst"]`.
-- Use parentheses for object literals and complex expressions: `map:item => ({key: value})`, e.g.: `[{gem: "obsidian", color: "black"}, {gem: "amethyst", color: "purple"}]|map:item => ({name: item.gem, color: item.color})`  returns `[{name: "obsidian", color: "black"}, {name: "amethyst", color: "purple"}]`.
+- `[{gem: "quartz", color: "clear"}, {gem: "amethyst", color: "purple"}]|map:item => item.gem` returns `["quartz", "amethyst"]`.
+- Use parentheses for object literals and complex expressions: `map:item => ({key: value})`, e.g.: `[{gem: "quartz", color: "clear"}, {gem: "amethyst", color: "purple"}]|map:item => ({name: item.gem, color: item.color})` returns `[{name: "quartz", color: "clear"}, {name: "amethyst", color: "purple"}]`.
 
 String literals are also supported, e.g. `["rock", "pop"]|map:item => "genres/${item}"` returns `["genres/rock", "genres/pop"]`.
 
@@ -364,9 +364,9 @@ Divides a string into an array of substrings.
 
 Applies a template string to an object or array of objects, using the syntax `object|template:"Template with ${variable}"`.
 
-- Access nested properties: `{"gem":{"name":"Obsidian"}}|template:"${gem.name}"` returns `"Obsidian"`.
-- For objects: `{"gem":"obsidian","hardness":5}|template:"${gem} has a hardness of ${hardness}"` returns `"obsidian has a hardness of 5"`.
-- For arrays: `[{"gem":"obsidian","hardness":5},{"gem":"amethyst","hardness":7}]|template:"- ${gem} has a hardness of ${hardness}\n"` returns a formatted list.
+- Access nested properties: `{"gem":{"name":"Quartz"}}|template:"${gem.name}"` returns `"Quartz"`.
+- For objects: `{"gem":"quartz","hardness":7}|template:"${gem} has a hardness of ${hardness}"` returns `"quartz has a hardness of 7"`.
+- For arrays: `[{"gem":"quartz","hardness":7},{"gem":"amethyst","hardness":7}]|template:"- ${gem} has a hardness of ${hardness}\n"` returns a formatted list.
 
 Works with string literals from `map` using `${str}`:
 

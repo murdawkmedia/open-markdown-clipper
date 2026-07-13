@@ -51,7 +51,7 @@ export const date_modify = (str: string, param?: string): string => {
 
 	let date = dayjs(str);
 	if (!date.isValid()) {
-		console.error('Invalid date for date_modify filter:', str);
+		console.error('Invalid date for date_modify filter');
 		return str;
 	}
 
@@ -66,7 +66,7 @@ export const date_modify = (str: string, param?: string): string => {
 	const match = param.match(regex);
 
 	if (!match) {
-		console.error('Invalid format for date_modify filter:', param);
+		console.error('Invalid format for date_modify filter');
 		return str;
 	}
 

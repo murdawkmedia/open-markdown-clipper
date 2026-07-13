@@ -27,7 +27,6 @@ body {
 @import 'styles/icons';
 @import 'styles/inputs';
 @import 'styles/inspect-variables';
-@import 'styles/interpreter';
 @import 'styles/menu';
 @import 'styles/modals';
 @import 'styles/popup';
@@ -80,4 +79,32 @@ pre, code {
 
 .is-hidden {
 	display: none !important;
+}
+
+.destination-settings-panel[hidden] {
+	display: none;
+}
+
+.destination-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	padding-block: 0.75rem;
+}
+
+.destination-action {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.25rem;
+
+	.destination-action-label {
+		color: var(--text-muted);
+		font-size: var(--font-ui-small);
+	}
+}
+
+.destination-status {
+	min-height: 1.4em;
+	margin: 0;
 }

@@ -1,109 +1,155 @@
-Obsidian Web Clipper helps you highlight and capture the web in your favorite browser. Anything you save is stored as durable Markdown files that you can read offline, and preserve for the long term.
+# Open Markdown Clipper
 
-- **[Download Web Clipper](https://obsidian.md/clipper)**
-- **[Documentation](https://help.obsidian.md/web-clipper)**
-- **[Troubleshooting](https://help.obsidian.md/web-clipper/troubleshoot)**
+Open Markdown Clipper captures web pages, selections, and highlights as durable
+Markdown. It is an independent, local-first Firefox and Chromium extension
+derived from the open-source Obsidian Web Clipper codebase.
 
-## Get started
+## Development status
 
-Install the extension by downloading it from the official directory for your browser:
+The public fork is in pre-release verification. Page extraction, templates,
+highlights, and reader view are retained, while the legacy application transport
+has been removed. Copy, Download, Custom URI, and authenticated loopback HTTP are
+the supported destination contracts.
 
-- **[Chrome Web Store](https://chromewebstore.google.com/detail/obsidian-web-clipper/cnjifjpddelmedmihgijeibhnjfabmlf)** for Chrome, Brave, Arc, Orion, and other Chromium-based browsers.
-- **[Firefox Add-Ons](https://addons.mozilla.org/en-US/firefox/addon/web-clipper-obsidian/)** for Firefox and Firefox Mobile.
-- **[Safari Extensions](https://apps.apple.com/us/app/obsidian-web-clipper/id6720708363)** for macOS, iOS, and iPadOS.
-- **[Edge Add-Ons](https://microsoftedge.microsoft.com/addons/detail/obsidian-web-clipper/eigdjhmgnaaeaonimdklocfekkaanfme)** for Microsoft Edge.
+No browser-store package has been published. Build and load the extension
+locally while version `0.1.0` is in development.
 
-## Use the extension
+## Principles
 
-Documentation is available on the [Obsidian Help site](https://help.obsidian.md/web-clipper), which covers how to use [highlighting](https://help.obsidian.md/web-clipper/highlight), [templates](https://help.obsidian.md/web-clipper/templates), [variables](https://help.obsidian.md/web-clipper/variables), [filters](https://help.obsidian.md/web-clipper/filters), and more.
+- Markdown remains durable and portable.
+- Copy and Download work without a desktop note application.
+- No telemetry or hosted account.
+- Network delivery is explicit and user-configured.
+- The raw Local HTTP access token is never synchronized, exported, or intentionally logged.
+- Firefox and Chromium are first-class targets; Safari is not packaged.
 
-## Contribute
+## Choose a destination
 
-### Translations
+Download is the default and needs no setup. The extension also supports Copy,
+a user-defined Custom URI, and an authenticated Local HTTP receiver. Configure
+the default and any receiver details under **Settings > Destination**. Custom
+URI templates and Local HTTP endpoints are synchronized and included in
+settings exports, so never put credentials or other secrets in either field.
+The raw Local HTTP access token stays in extension-local storage and is
+deliberately excluded from settings export and synchronization.
 
-You can help translate Web Clipper into your language. Submit your translation via pull request using the format found in the [/_locales](/src/_locales) folder.
+Firefox asks for optional consent to transmit browsing activity, website
+content, and website activity when Custom URI would send data outside the
+extension. Local HTTP asks for those categories plus authentication information
+because it transmits the bearer token. Copy and Download do not request that
+consent. A popup or Settings action can show the Firefox prompt;
+Reader controls and Quick Clip never interrupt with a permission prompt, so
+grant consent from the popup or Settings before using either with a
+transmitting destination. Removing the grant makes subsequent sends fail
+closed.
 
-### Features and bug fixes
+Local HTTP accepts only an explicit
+`http://127.0.0.1:<port>/<non-root-path>` endpoint with no query string or
+fragment. Its bearer token proves the
+sender to the receiver, but it does not prove the receiver to the extension:
+another local process that owns the configured port could receive the token and
+capture. Use a receiver you control. If a POST times out or loses its connection
+after dispatch, the result is reported as unknown because the receiver may
+already have saved it; check the receiver before retrying.
 
-See the [help wanted](https://github.com/obsidianmd/obsidian-clipper/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) tag for issues where contributions are welcome.
+### Local HTTP receiver contract
 
-## Roadmap
+The **Test connection** action sends an authenticated `HEAD` request with no
+body. A capture sends an authenticated `POST` with `Content-Type:
+application/json` and exactly these fields:
 
-In no particular order:
-
-- [ ] Annotate highlights
-- [ ] Template directory
-- [ ] Sync settings across browsers
-- [x] A separate icon for Web Clipper (1.6.3)
-- [x] Template validation (1.1.0)
-- [x] Template logic (if/for)  (1.1.0)
-- [x] Save images locally ([Obsidian 1.8.0](https://obsidian.md/changelog/2024-12-18-desktop-v1.8.0/))
-- [x] Translate UI into more languages — help is welcomed
-
-## Developers
-
-To build the extension:
-
-```
-npm run build
-```
-
-This will create three directories:
-- `dist/` for the Chromium version
-- `dist_firefox/` for the Firefox version
-- `dist_safari/` for the Safari version
-
-### Install the extension locally
-
-For Chromium browsers, such as Chrome, Brave, Edge, and Arc:
-
-1. Open your browser and navigate to `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked** and select the `dist` directory
-
-For Firefox:
-
-1. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`
-2. Click **Load Temporary Add-on**
-3. Navigate to the `dist_firefox` directory and select the `manifest.json` file
-
-If you want to run the extension permanently you can do so with the Nightly or Developer versions of Firefox.
-
-1. Type `about:config` in the URL bar
-2. In the Search box type `xpinstall.signatures.required`
-3. Double-click the preference, or right-click and select "Toggle", to set it to `false`.
-4. Go to `about:addons` > gear icon > **Install Add-on From File…**
-
-For iOS Simulator testing on macOS:
-
-1. Run `npm run build` to build the extension
-2. Open `xcode/Obsidian Web Clipper/Obsidian Web Clipper.xcodeproj` in Xcode
-3. Select the **Obsidian Web Clipper (iOS)** scheme from the scheme selector
-4. Choose an iOS Simulator device and click **Run** to build and launch the app
-5. Once the app is running on the simulator, open **Safari**
-6. Navigate to a webpage and tap the **Extensions** button in Safari to access the Web Clipper extension
-
-### Run tests
-
-```
-npm test
+```json
+{
+  "title": "Page title",
+  "markdown": "# Rendered capture",
+  "sourceUrl": "https://example.com/page",
+  "capturedAt": "2026-07-12T18:00:00.000Z"
+}
 ```
 
-Or run in watch mode during development:
+Both requests carry the configured access token as a Bearer authorization
+header. The receiver should return any 2xx status. Redirects and all other
+statuses are failures; response bodies are cancelled without being read. The
+extension applies a ten-second request timeout. Because a failed or timed-out
+POST may still have been committed, receivers should make duplicate handling
+safe and users should check the receiver before retrying.
 
+Treat every request field as attacker-controlled web content even when the
+Bearer token is valid. A receiver should enforce schema and size limits, store
+captures as data, sanitize any rendered Markdown, HTML, or links, and never
+execute frontmatter or interpolate capture fields into shell commands.
+
+The v0.1 extension never places a privileged delivery interface inside an
+arbitrary web page. Delivery runs in browser-owned extension UI: the popup,
+Chrome's native side panel, or an extension-origin Reader page.
+
+See [SECURITY.md](SECURITY.md) for the complete trust boundaries.
+
+## Build locally
+
+Requirements: Node.js 22 or newer and npm. The browser packages target
+Chromium 127 or newer (the first general release with `action.openPopup`) and
+Firefox 149 or newer (where `action.openPopup` remains callable after awaited
+Quick Clip setup).
+
+```sh
+npm ci
+npm run verify
+npm audit --audit-level=high
 ```
-npm run test:watch
+
+Build outputs:
+
+- `dist/` for Chromium browsers.
+- `dist_firefox/` for Firefox.
+- `builds/open-markdown-clipper-0.1.0-chrome.zip`.
+- `builds/open-markdown-clipper-0.1.0-firefox.zip`.
+
+For Chromium, open `chrome://extensions`, enable Developer mode, choose **Load
+unpacked**, and select `dist/`.
+
+For Firefox development, open `about:debugging#/runtime/this-firefox`, choose
+**Load Temporary Add-on**, and select `dist_firefox/manifest.json`.
+
+## Verify public-release boundaries
+
+```sh
+node scripts/public-release-scan.mjs --identity
+npm run scan:public
 ```
 
-## Third-party libraries
+The complete `verify` command runs tests, TypeScript checking, scanner tests,
+the final public scan, API/CLI builds, and both browser builds. Both identity
+and final public scans must pass before the repository is released.
 
-- [webextension-polyfill](https://github.com/mozilla/webextension-polyfill) for browser compatibility
-- [defuddle](https://github.com/kepano/defuddle) for content extraction and Markdown conversion
-- [dayjs](https://github.com/iamkun/dayjs) for date parsing and formatting
-- [lz-string](https://github.com/pieroxy/lz-string) to compress templates to reduce storage space
-- [lucide](https://github.com/lucide-icons/lucide) for icons
-- [dompurify](https://github.com/cure53/DOMPurify) for sanitizing HTML
+## Documentation
+
+- [Introduction](docs/Introduction%20to%20Open%20Markdown%20Clipper.md)
+- [Clip web pages](docs/Clip%20web%20pages.md)
+- [Highlight web pages](docs/Highlight%20web%20pages.md)
+- [Templates](docs/Templates.md)
+- [Variables](docs/Variables.md)
+- [Filters](docs/Filters.md)
+- [Template logic](docs/Logic.md)
+- [Troubleshooting](docs/Troubleshoot%20Open%20Markdown%20Clipper.md)
+
+## Upstream provenance
+
+This project began as a fork of
+[`obsidianmd/obsidian-clipper`](https://github.com/obsidianmd/obsidian-clipper).
+The upstream MIT-covered source history and copyright notice are preserved.
+Upstream trademarks, icons, store imagery, and marketing assets are not part of
+this project. Open Markdown Clipper is not affiliated with or endorsed by
+Obsidian.
+
+See [NOTICE.md](NOTICE.md) for provenance and material changes.
+
+## Contributing
+
+Use a feature branch and open a pull request. `main` is the release branch, and
+tests, both browser builds, identity checks, dependency audit policy, and the
+public privacy scan must pass before merge.
 
 ## License
 
-Obsidian Web Clipper source code is open source under the MIT License. All trademarks, icons, marketing copy, and other marketing assets are excluded from that license.
+MIT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

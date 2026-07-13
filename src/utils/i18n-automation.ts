@@ -32,10 +32,10 @@ export default class I18nAutomation {
 	private initializeChatHistory(targetLanguage: string) {
 		this.chatHistories[targetLanguage] = [{
 			role: "system",
-			content: `You are a professional translator for the Obsidian Web Clipper browser extension.
+			content: `You are a professional translator for the Open Markdown Clipper browser extension.
 
 About the extension:
-- It's a browser extension that helps users save web content to their Obsidian vault
+- It's a browser extension that captures web content as Markdown for user-selected destinations
 - Users can clip entire articles, selected text, or highlights
 - It includes features for customizing templates, managing settings, and organizing clips
 - The interface needs to be clear and concise
@@ -53,7 +53,7 @@ Always respond with a valid JSON object in this exact format:
 {"key1":"translation1","key2":"translation2"}
 
 Example input:
-save: (button) "Save to vault"
+save: (button) "Deliver clipped Markdown"
 error: (error message) "Failed to connect"
 
 Example response:
@@ -313,4 +313,4 @@ Example response:
 
 		console.log('\n✨ Localization process completed successfully!\n');
 	}
-} 
+}

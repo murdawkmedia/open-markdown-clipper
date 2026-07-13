@@ -21,7 +21,7 @@ let touchStartY: number = 0;
 let isTouchMoved: boolean = false;
 
 const IGNORED_BOUNDARY_SELECTOR =
-	'.obsidian-highlighter-menu, .obsidian-reader-settings, .transcript-segment > strong, .obsidian-highlight-delete, .obsidian-selection-action';
+	'.open-markdown-clipper-highlighter-menu, .open-markdown-clipper-reader-settings, .transcript-segment > strong, .open-markdown-clipper-highlight-delete, .open-markdown-clipper-selection-action';
 
 // --- Custom Highlight API (for type: 'text' highlights) ---
 //
@@ -33,7 +33,7 @@ const IGNORED_BOUNDARY_SELECTOR =
 // Requires CSS Custom Highlight API: Chrome 105+, Safari 17.2+, Firefox 140+.
 // If unavailable the renderer silently no-ops.
 
-const USER_HIGHLIGHT_NAME = 'obsidian-highlight';
+const USER_HIGHLIGHT_NAME = 'open-markdown-clipper-highlight';
 // Priority below transcript-playback (default 0) so audio playback highlights
 // paint on top inside transcripts.
 const USER_HIGHLIGHT_PRIORITY = -1;
@@ -226,7 +226,7 @@ function highlightExactText(highlight: RenderableTextHighlight): string {
 
 // Prefer the article body so the fallback search ignores nav/chrome/furniture.
 function getTextSearchRoot(): Element {
-	return document.querySelector('.obsidian-reader-content article')
+	return document.querySelector('.open-markdown-clipper-reader-content article')
 		|| document.querySelector('article')
 		|| document.body;
 }
@@ -365,7 +365,7 @@ export function clearTextHighlights(): void {
 }
 
 function findOverlayAtPoint(x: number, y: number): HTMLElement | null {
-	const overlays = document.querySelectorAll<HTMLElement>('.obsidian-highlight-overlay');
+	const overlays = document.querySelectorAll<HTMLElement>('.open-markdown-clipper-highlight-overlay');
 	for (let i = 0; i < overlays.length; i++) {
 		const el = overlays[i];
 		const r = el.getBoundingClientRect();
@@ -410,7 +410,7 @@ function ensureHighlightDeleteButton(): HTMLButtonElement {
 	if (highlightDeleteButton) return highlightDeleteButton;
 	const btn = document.createElement('button');
 	btn.type = 'button';
-	btn.className = 'obsidian-highlight-delete';
+	btn.className = 'open-markdown-clipper-highlight-delete';
 	btn.setAttribute('aria-label', getMessage('remove'));
 	setElementHTML(btn, `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg><span>${getMessage('remove')}</span>`);
 	btn.style.display = 'none';
@@ -506,7 +506,7 @@ function handleHighlightClick(event: MouseEvent) {
 	const target = event.target as Element | null;
 
 	// Clicking the remove button, selection button, or a link — let native behavior run.
-	if (target?.closest('.obsidian-highlight-delete, .obsidian-selection-action, a[href]')) return;
+	if (target?.closest('.open-markdown-clipper-highlight-delete, .open-markdown-clipper-selection-action, a[href]')) return;
 
 	// Don't show the remove button immediately after creating a highlight —
 	// the click that ends a drag-selection shouldn't also surface "Remove".
@@ -552,10 +552,10 @@ export function handleMouseUp(event: MouseEvent | TouchEvent) {
 		// browsers extend the selection vertically (up for left, down for
 		// right), often selecting the entire article. Detect this by checking
 		// whether mouseup landed outside the text column — if so, discard.
-		// NOTE: only works in reader mode (.obsidian-reader-content). On live
+		// NOTE: only works in reader mode (.open-markdown-clipper-reader-content). On live
 		// pages the content container isn't known, so this guard is a no-op.
 		if (event instanceof MouseEvent) {
-			const readerContent = document.querySelector('.obsidian-reader-content');
+			const readerContent = document.querySelector('.open-markdown-clipper-reader-content');
 			if (readerContent) {
 				const bounds = readerContent.getBoundingClientRect();
 				if (event.clientX < bounds.left || event.clientX > bounds.right) {
@@ -569,7 +569,7 @@ export function handleMouseUp(event: MouseEvent | TouchEvent) {
 	}
 
 	// Delete button / selection action button — let their own handlers run.
-	if (target.closest('.obsidian-highlight-delete, .obsidian-selection-action')) return;
+	if (target.closest('.open-markdown-clipper-highlight-delete, .open-markdown-clipper-selection-action')) return;
 
 	// Block-level one-click highlight (figure, img, table, pre, picture).
 	const block = findBlockToHighlight(target);
@@ -608,7 +608,7 @@ export function planHighlightOverlayRects(target: Element | null, highlight: Any
 	if (!target) return;
 	const rect = target.getBoundingClientRect();
 	const overlay = document.createElement('div');
-	overlay.className = 'obsidian-highlight-overlay';
+	overlay.className = 'open-markdown-clipper-highlight-overlay';
 	overlay.dataset.highlightId = highlight.id;
 	overlay.style.position = 'absolute';
 	overlay.style.left = `${rect.left + window.scrollX - 2}px`;
@@ -620,7 +620,7 @@ export function planHighlightOverlayRects(target: Element | null, highlight: Any
 	}
 	const atPoint = document.elementFromPoint(rect.left, rect.top);
 	if (atPoint && isDarkColor(getEffectiveBackgroundColor(atPoint as HTMLElement))) {
-		overlay.classList.add('obsidian-highlight-overlay-dark');
+		overlay.classList.add('open-markdown-clipper-highlight-overlay-dark');
 	}
 	document.body.appendChild(overlay);
 }
@@ -642,7 +642,7 @@ function updateHighlightOverlayPositions() {
 		if (highlight.type === 'text') return;
 		const target = getElementByXPath(highlight.xpath);
 		if (!target) return;
-		document.querySelectorAll(`.obsidian-highlight-overlay[data-highlight-id="${highlight.id}"]`)
+		document.querySelectorAll(`.open-markdown-clipper-highlight-overlay[data-highlight-id="${highlight.id}"]`)
 			.forEach(el => el.remove());
 		planHighlightOverlayRects(target, highlight);
 	});
@@ -662,7 +662,7 @@ window.addEventListener('scroll', throttledUpdateHighlights);
 const observer = new MutationObserver((mutations) => {
 	if (isApplyingHighlights) return;
 	const shouldUpdate = mutations.some(m => {
-		if (!(m.target instanceof Element) || m.target.id.startsWith('obsidian-highlight')) return false;
+		if (!(m.target instanceof Element) || m.target.id.startsWith('open-markdown-clipper-highlight')) return false;
 		return m.type === 'childList'
 			|| (m.type === 'attributes' && (m.attributeName === 'style' || m.attributeName === 'class'));
 	});
@@ -687,7 +687,7 @@ function handleHighlightHover(event: MouseEvent) {
 		const cursor = onHighlight ? 'pointer' : '';
 		if (cursor !== lastCursor) { document.body.style.cursor = cursor; lastCursor = cursor; }
 
-		const onButton = !!target?.closest('.obsidian-highlight-delete');
+		const onButton = !!target?.closest('.open-markdown-clipper-highlight-delete');
 
 		if (altKey && (onHighlight || onButton)) {
 			if (textId) showHighlightDeleteButtonForText(textId);
@@ -705,7 +705,7 @@ function handleHighlightHover(event: MouseEvent) {
 let listenersAttached = false;
 let observerAttached = false;
 export function syncHoverListener(): void {
-	const isActive = document.body.classList.contains('obsidian-highlighter-active');
+	const isActive = document.body.classList.contains('open-markdown-clipper-highlighter-active');
 	const needed = highlights.length > 0 || isActive;
 	if (needed && !listenersAttached) {
 		// Capture phase so the click fires before disableLinkClicks()'s
@@ -738,7 +738,7 @@ export function syncHoverListener(): void {
 
 // Remove all existing highlight overlays from the page
 export function removeExistingHighlights() {
-	document.querySelectorAll('.obsidian-highlight-overlay').forEach(el => el.remove());
+	document.querySelectorAll('.open-markdown-clipper-highlight-overlay').forEach(el => el.remove());
 	clearTextHighlights();
 	hideHighlightDeleteButton();
 }

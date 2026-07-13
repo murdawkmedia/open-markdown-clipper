@@ -23,7 +23,7 @@ export function sanitizeFileName(fileName: string): string {
 	const isWindows = /win/i.test(platform);
 	const isMac = /mac/i.test(platform);
 
-	// First remove Obsidian-specific characters that should be sanitized across all platforms
+	// First remove cross-platform characters that should be sanitized across all platforms
 	let sanitized = fileName.replace(/[#|\^\[\]]/g, '');
 
 	if (isWindows) {
@@ -127,8 +127,8 @@ export function makeUrlAbsolute(element: Element, attributeName: string, baseUrl
 				const newUrl = url.href;
 				element.setAttribute(attributeName, newUrl);
 			}
-		} catch (error) {
-			console.warn(`Failed to process URL: ${attributeValue}`, error);
+		} catch {
+			console.warn('Failed to process URL');
 			element.setAttribute(attributeName, attributeValue);
 		}
 	}
@@ -189,8 +189,8 @@ export function getDomain(url: string): string {
 		}
 		
 		return hostParts.slice(-2).join('.');
-	} catch (error) {
-		console.warn('Invalid URL:', url);
+	} catch {
+		console.warn('Invalid URL');
 		return '';
 	}
 }

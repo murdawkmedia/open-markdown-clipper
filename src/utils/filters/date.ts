@@ -43,7 +43,7 @@ export const date = (str: string, param?: string): string => {
 	}
 
 	if (!date.isValid()) {
-		console.error('Invalid date for date filter:', str);
+		console.error('Invalid date for date filter');
 		return str;
 	}
 

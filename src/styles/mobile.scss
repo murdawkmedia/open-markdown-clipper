@@ -106,7 +106,7 @@
 		max-height: 100dvh;
 		width: 100%;
 	}
-	&:not(.is-embedded) .clipper .clipper-footer {
+	&:not(.is-reader-panel) .clipper .clipper-footer {
 		will-change: bottom;
 		position: absolute;
 		bottom: 0;
@@ -115,11 +115,8 @@
 		button {
 			font-weight: 600;
 		}
-		.vault-path-container {
-			gap:calc(var(--popup-padding) / 2);
-		}
 	}
-	&:not(.is-embedded) #embedded-mode {
+	&:not(.is-reader-panel) #reader-panel-close {
 		display: none;
 	}
 }

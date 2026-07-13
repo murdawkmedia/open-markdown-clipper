@@ -27,9 +27,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 	// Show loading spinner with themed background while fetching
 	const loadingDiv = document.createElement('div');
-	loadingDiv.className = 'obsidian-reader-loading';
+	loadingDiv.className = 'open-markdown-clipper-reader-loading';
 	const loadingText = document.createElement('div');
-	loadingText.className = 'obsidian-reader-loading-text';
+	loadingText.className = 'open-markdown-clipper-reader-loading-text';
 	loadingText.textContent = getMessage('readerLoading');
 	loadingDiv.appendChild(loadingText);
 	document.body.replaceChildren(loadingDiv);
@@ -106,14 +106,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 		console.error('Failed to load page:', error);
 		document.body.textContent = '';
 		const container = document.createElement('div');
-		container.className = 'obsidian-reader-error';
+		container.className = 'open-markdown-clipper-reader-error';
 		const text = document.createElement('div');
-		text.className = 'obsidian-reader-error-text';
+		text.className = 'open-markdown-clipper-reader-error-text';
 		text.textContent = getMessage('readerLoadFailed');
 		container.appendChild(text);
 		if (url) {
 			const link = document.createElement('a');
-			link.className = 'obsidian-reader-error-link';
+			link.className = 'open-markdown-clipper-reader-error-link';
 			link.href = url;
 			link.textContent = getMessage('disableReader');
 			container.appendChild(link);
@@ -204,14 +204,33 @@ async function fetchWithRedirects(url: string): Promise<{ html: string; finalUrl
 
 // --- SPA navigation ---
 
-async function loadArticle(newUrl: string) {
+interface ReaderNavigationOptions {
+	readonly pushHistory?: boolean;
+	readonly historyAlreadyMutated?: boolean;
+}
+
+async function loadArticle(
+	newUrl: string,
+	options: ReaderNavigationOptions = {},
+) {
+	const navigation = Reader.beginDestinationNavigation();
+	let destinationMutationStarted = false;
+	if (options.historyAlreadyMutated) destinationMutationStarted = true;
 	const originalUrl = newUrl;
-	window.scrollTo(0, 0);
 
 	try {
+		window.scrollTo(0, 0);
+		if (options.pushHistory) {
+			destinationMutationStarted = true;
+			const readerUrl = browser.runtime.getURL('reader.html?url=' + encodeURIComponent(newUrl));
+			history.pushState(null, '', readerUrl);
+		}
+
 		const { html, finalUrl } = await fetchWithRedirects(newUrl);
+		if (!Reader.isDestinationNavigationCurrent(navigation)) return;
 		newUrl = finalUrl;
 		if (newUrl !== originalUrl) {
+			destinationMutationStarted = true;
 			const readerUrl = browser.runtime.getURL('reader.html?url=' + encodeURIComponent(newUrl));
 			history.replaceState(null, '', readerUrl);
 		}
@@ -225,7 +244,9 @@ async function loadArticle(newUrl: string) {
 		if (!result.content) {
 			throw new Error('Could not extract article content');
 		}
+		if (!Reader.isDestinationNavigationCurrent(navigation)) return;
 
+		destinationMutationStarted = true;
 		Object.defineProperty(document, 'URL', { value: newUrl, configurable: true });
 		document.title = result.title || newUrl;
 		const baseEl = document.querySelector('base');
@@ -245,9 +266,12 @@ async function loadArticle(newUrl: string) {
 			wordCount: result.wordCount,
 			parseTime: result.parseTime,
 		});
+		if (!Reader.isDestinationNavigationCurrent(navigation)) return;
+		Reader.completeDestinationNavigation(navigation);
 
 		setupReaderPageMessageHandler(newUrl, result);
 	} catch (error) {
+		Reader.settleDestinationNavigationFailure(navigation, destinationMutationStarted);
 		console.error('Failed to navigate:', error);
 	}
 }
@@ -267,15 +291,13 @@ function setFavicon(faviconUrl: string, pageUrl: string) {
 }
 
 function navigateInReader(newUrl: string) {
-	const readerUrl = browser.runtime.getURL('reader.html?url=' + encodeURIComponent(newUrl));
-	history.pushState(null, '', readerUrl);
-	loadArticle(newUrl);
+	void loadArticle(newUrl, { pushHistory: true });
 }
 
 window.addEventListener('popstate', () => {
 	const params = new URLSearchParams(window.location.search);
 	const url = params.get('url');
-	if (url) loadArticle(url);
+	if (url) void loadArticle(url, { historyAlreadyMutated: true });
 });
 
 function showUrlInput() {
@@ -330,7 +352,7 @@ async function applyReaderTheme() {
 		const settings = data.reader_settings as ReaderSettings | undefined;
 
 		const html = document.documentElement;
-		html.classList.add('obsidian-reader-active');
+		html.classList.add('open-markdown-clipper-reader-active');
 
 		const isDark = settings
 			? settings.appearance === 'dark' || (settings.appearance === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -344,7 +366,7 @@ async function applyReaderTheme() {
 			}
 		}
 	} catch {
-		document.documentElement.classList.add('obsidian-reader-active');
+		document.documentElement.classList.add('open-markdown-clipper-reader-active');
 		document.documentElement.classList.add(
 			window.matchMedia('(prefers-color-scheme: dark)').matches ? 'theme-dark' : 'theme-light'
 		);

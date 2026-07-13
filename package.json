@@ -1,12 +1,20 @@
 {
-	"name": "obsidian-clipper",
-	"version": "1.7.0",
-	"description": "Official web clipper for Obsidian.",
+	"name": "open-markdown-clipper",
+	"version": "0.1.0",
+	"description": "Capture web pages as durable Markdown and deliver them to local destinations.",
+	"license": "MIT",
+	"homepage": "https://github.com/murdawkmedia/open-markdown-clipper",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/murdawkmedia/open-markdown-clipper.git"
+	},
 	"bin": {
-		"obsidian-clipper": "./dist/cli.cjs"
+		"open-markdown-clipper": "./dist/cli.cjs"
 	},
 	"files": [
-		"dist"
+		"dist/cli.cjs",
+		"dist/api.mjs",
+		"NOTICE.md"
 	],
 	"exports": {
 		".": "./dist/cli.cjs",
@@ -17,20 +25,24 @@
 		"defuddle-prod": "node scripts/set-defuddle-prod.js",
 		"dev:chrome": "webpack --watch --env BROWSER=chrome --mode development",
 		"dev:firefox": "webpack --watch --env BROWSER=firefox --mode development",
-		"dev:safari": "webpack --watch --env BROWSER=safari --mode development",
 		"build:chrome": "webpack --env BROWSER=chrome --mode production",
 		"build:firefox": "webpack --env BROWSER=firefox --mode production",
-		"build:safari": "webpack --env BROWSER=safari --mode production",
-		"build": "npm run build:chrome && npm run build:firefox && npm run build:safari",
+		"build": "npm run build:chrome && npm run build:firefox",
 		"build:cli": "node scripts/build-cli.mjs",
 		"build:api": "node scripts/build-api.mjs",
+		"typecheck": "tsc --noEmit --module es2020",
+		"scan:public": "node scripts/public-release-scan.mjs",
+		"verify:node": "node --test scripts/public-release-scan.test.mjs scripts/check-unused-strings.test.mjs scripts/build-config.test.cjs scripts/icon-assets.test.mjs",
+		"verify": "npm test && npm run typecheck && npm run verify:node && npm run scan:public && npm run build && npm run build:cli && npm run build:api",
+		"generate:icons": "node scripts/generate-icons.mjs",
+		"verify:icons": "node --test scripts/icon-assets.test.mjs",
 		"dev": "npm run dev:chrome",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"update-locales": "ts-node --project scripts/tsconfig.json scripts/update-locales.ts",
 		"check-strings": "ts-node --project scripts/tsconfig.json scripts/check-unused-strings.ts",
 		"add-locale": "ts-node --project scripts/tsconfig.json scripts/add-locale.ts",
-		"prepublishOnly": "npm run build:cli && npm run build:api"
+		"prepack": "npm run build && npm run build:cli && npm run build:api"
 	},
 	"devDependencies": {
 		"@types/chrome": "^0.0.270",
@@ -46,6 +58,7 @@
 		"mini-css-extract-plugin": "^2.9.1",
 		"sass": "^1.77.8",
 		"sass-loader": "^16.0.1",
+		"sharp": "^0.35.3",
 		"ts-loader": "^9.5.1",
 		"ts-node": "^10.9.2",
 		"typescript": "^5.5.4",
@@ -56,10 +69,9 @@
 		"zip-webpack-plugin": "^4.0.1"
 	},
 	"dependencies": {
-		"@types/safari-extension": "^0.0.33",
 		"dayjs": "^1.11.13",
-		"defuddle": "^0.19.0",
-		"dompurify": "^3.0.9",
+		"defuddle": "^0.19.1",
+		"dompurify": "^3.4.12",
 		"highlight.js": "^11.11.1",
 		"linkedom": "^0.18.0",
 		"lucide": "^0.359.0",

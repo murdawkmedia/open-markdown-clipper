@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html id="popup">
 	<head>
-		<title data-i18n="extensionName">Obsidian Web Clipper</title>
+		<title data-i18n="extensionName">Open Markdown Clipper</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 		<link rel="stylesheet" href="style.css">
 		<script src="browser-polyfill.min.js"></script>
@@ -26,10 +26,6 @@
 					data-i18n-title="reader">
 					<i data-lucide="book-open"></i>
 				</a>
-				<a href="#" id="embedded-mode" class="clickable-icon" 
-					data-i18n-title="openEmbedded">
-					<i data-lucide="picture-in-picture-2"></i>
-				</a>
 				<a href="#" id="open-settings" class="clickable-icon" 
 					data-i18n-title="settings">
 					<i data-lucide="settings"></i>
@@ -38,6 +34,7 @@
 		</div>
 		<p class="error-message" style="display: none;"></p>
 		<div class="clipper">
+			<p id="delivery-status" role="status" aria-live="polite" hidden></p>
 			<textarea id="note-name-field" type="text" data-i18n="noteName" rows="1"></textarea>
 			<div class="metadata-properties-header">
 				<span data-i18n="properties"></span>
@@ -48,26 +45,10 @@
 				<textarea id="note-content-field" rows="4" data-i18n="notesAboutPage"></textarea>
 			</div>
 			<div class="clipper-footer">
-				<div class="vault-path-container">
-					<div id="vault-container" style="display: none;">
-						<select id="vault-select"></select>
-					</div>
-					<input id="path-name-field" type="text" data-i18n="folder"/>
-				</div>
-				<div id="interpreter" style="display: none;">
-					<textarea id="prompt-context" rows="3"></textarea>
-					<div class="interpreter-controls">
-						<select id="model-select" style="display: none;"></select>
-						<button id="interpret-btn" data-i18n="interpret"></button>
-						<span id="interpreter-timer" style="display: none;"></span>
-					</div>
-					<div id="token-counter" class="token-counter"></div>
-					<div id="interpreter-error" style="display: none;"></div>
-				</div>
 				<div class="action-buttons" id="action-buttons">
-					<button id="clip-btn" class="mod-cta"><!-- Text set by determineMainAction --></button>
+					<button id="clip-btn" class="mod-cta" disabled><!-- Destination text is set at startup. --></button>
 					<div class="menu-btn">
-						<button id="more-btn"><i data-lucide="chevron-down"></i></button>
+						<button id="more-btn" disabled><i data-lucide="chevron-down"></i></button>
 						<div class="menu" id="more-dropdown">
 							<div class="secondary-actions">
 								<!-- Secondary actions will be populated by ts -->

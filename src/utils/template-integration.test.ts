@@ -96,6 +96,10 @@ async function runFixture(html: string, url: string, template: FixtureTemplate):
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'templates');
 const EXPECTED_DIR = join(__dirname, 'fixtures', 'expected');
 
+function normalizeFixture(value: string): string {
+	return value.replace(/\r\n/g, '\n').trim();
+}
+
 function getFixtures(): Array<{ name: string; jsonPath: string; htmlPath: string }> {
 	const files = readdirSync(FIXTURES_DIR).filter(f => f.endsWith('.json'));
 	return files.map(file => {
@@ -155,6 +159,6 @@ describe('Template fixtures', () => {
 			);
 		}
 
-		expect(result.trim()).toEqual(expected.trim());
+		expect(normalizeFixture(result)).toEqual(normalizeFixture(expected));
 	});
 });

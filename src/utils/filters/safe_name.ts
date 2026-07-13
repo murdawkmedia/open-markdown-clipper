@@ -23,7 +23,7 @@ export const safe_name = (str: string, param?: string): string => {
 
 	let sanitized = str;
 
-	// First remove Obsidian-specific characters that should be sanitized across all platforms
+	// First remove cross-platform characters that should be sanitized across all platforms
 	sanitized = sanitized.replace(/[#|\^\[\]]/g, '');
 
 	switch (os) {

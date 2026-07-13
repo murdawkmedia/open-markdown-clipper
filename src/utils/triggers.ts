@@ -11,8 +11,8 @@ const memoizedInternalMatchPattern = memoize(
 				const regexPattern = new RegExp(pattern.slice(1, -1));
 				const result = regexPattern.test(url);
 				return result;
-			} catch (error) {
-				console.error(`Invalid regex pattern: ${pattern}`, error);
+			} catch {
+				console.error('Invalid regex pattern');
 				return false;
 			}
 		} else {
@@ -126,7 +126,6 @@ const memoizedFindMatchingTemplate = memoizeWithExpiration(
 			const schemaOrgData = await getSchemaOrgData();
 			for (const { template, pattern } of schemaTriggers) {
 				if (matchSchemaPattern(pattern, schemaOrgData)) {
-					console.log('Schema match found:', template);
 					return template;
 				}
 			}

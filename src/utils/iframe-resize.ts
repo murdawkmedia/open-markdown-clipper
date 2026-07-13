@@ -1,7 +1,7 @@
 import browser from './browser-polyfill';
 import { throttle } from './throttle';
 
-const IFRAME_ID = 'obsidian-clipper-iframe';
+const IFRAME_ID = 'open-markdown-clipper-iframe';
 const MIN_SIZE = 200;
 
 let sidebarWidthRaf: number | null = null;
@@ -24,7 +24,7 @@ interface ResizeCallbacks {
 
 export function addResizeHandle(doc: Document, container: HTMLElement, direction: string, callbacks?: ResizeCallbacks): void {
 	const handle = doc.createElement('div');
-	handle.className = `obsidian-clipper-resize-handle obsidian-clipper-resize-handle-${direction}`;
+	handle.className = `open-markdown-clipper-resize-handle open-markdown-clipper-resize-handle-${direction}`;
 	container.appendChild(handle);
 
 	let startX: number, startY: number, startWidth: number, startHeight: number, startTop: number;

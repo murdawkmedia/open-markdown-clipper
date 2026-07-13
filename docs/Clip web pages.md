@@ -1,19 +1,19 @@
 ---
 permalink: web-clipper/capture
 aliases:
-  - Obsidian Web Clipper/Capture web pages
+  - Open Markdown Clipper/Capture web pages
 ---
-Once you install the [[Introduction to Obsidian Web Clipper|Web Clipper]] browser extension, you can access it in several ways, depending on your browser:
+Once you install the [[Introduction to Open Markdown Clipper|Web Clipper]] browser extension, you can access it in several ways, depending on your browser:
 
-1. The Obsidian icon in your browser toolbar.
+1. The Open Markdown Clipper icon in your browser toolbar.
 2. Hotkeys, to activate the extension from your keyboard.
 3. Context menu, by right-clicking the web page you are visiting.
 
-To save a page to Obsidian click the **Add to Obsidian** button.
+Use the primary action in the extension footer to deliver the rendered Markdown by Copy, Download, Custom URI, or Local HTTP.
 
 ## Capture a page
 
-When you open the extension, Web Clipper extracts data from the current web page following the settings in your [[Obsidian Web Clipper/Templates|template]]. You can create your own templates, and customize the output using [[variables]] and [[filters]].
+When you open the extension, Web Clipper extracts data from the current web page following the settings in your [[Templates|template]]. You can create your own templates, and customize the output using [[variables]] and [[filters]].
 
 By default Web Clipper attempts to intelligently extract only the main article content, excluding other elements on the page. However, you can override this behavior in the following ways:
 
@@ -23,17 +23,15 @@ By default Web Clipper attempts to intelligently extract only the main article c
 
 ## Download images
 
-Images are not automatically downloaded when you use Web Clipper. Instead, images link to their web-based URL. This saves space in your vault but it means the images will not be accessible offline, or if the URL stops working.
-
-You can download images for any file in Obsidian using the [[Command palette|command]] named **Download attachments for current file**. This command can also be mapped to a hotkey in Obsidian.
+Images are not automatically downloaded when you use Web Clipper. Instead, captured Markdown links to each image's web URL. This keeps captures small, but the images will not be available offline and may disappear if the source URL changes.
 
 ## Hotkeys
 
-Web Clipper includes keyboard shortcuts you can use to speed up your workflow. To change key mappings go to **Web Clipper Settings** → **General** and follow the instructions for your browser. Mappings can be changed for all browsers except Safari which does not support editing hotkeys.
+Web Clipper includes keyboard shortcuts you can use to speed up your workflow. To change key mappings, go to **Web Clipper Settings** → **General** and follow the instructions for Firefox or your Chromium browser.
 
 | Action                  | macOS         | Windows/Linux  |
 | ----------------------- | ------------- | -------------- |
-| Open clipper            | `Cmd+Shift+O` | `Ctrl+Shift+O` |
+| Open clipper            | `Opt+Shift+M` | `Alt+Shift+M`  |
 | Quick clip              | `Opt+Shift+O` | `Alt+Shift+O`  |
 | Toggle highlighter mode | `Opt+Shift+H` | `Alt+Shift+H`  |
 
@@ -42,21 +40,16 @@ Web Clipper includes keyboard shortcuts you can use to speed up your workflow. T
 The Web Clipper interface is divided into four sections:
 
 1. **Header** where you can switch templates, turn on [[Highlight web pages|highlighting]], and access settings.
-2. **Properties** shows the [[Properties|metadata]] extracted from the page that will be saved as [[Properties]] in Obsidian.
-3. **Note content** that will be saved to Obsidian.
-4. **Footer** allows you select the vault and folder, and add to Obsidian.
+2. **Properties** shows the metadata extracted from the page and rendered as Markdown frontmatter.
+3. **Note content** previews the Markdown body.
+4. **Footer** contains delivery controls for the rendered capture.
 
 Header functionality includes:
 
-- **Template** dropdown to switch between your saved [[Obsidian Web Clipper/Templates|templates]] added in Web Clipper settings.
+- **Template** dropdown to switch between your saved [[Templates|templates]] added in Web Clipper settings.
 - **More (...)** button to display page variables you can use in templates.
 - **Highlighter** button to turn on [[Highlight web pages|highlighting]].
 - **Cog** button to open Web Clipper settings.
 
-Footer functionality includes:
-
-- **Add to Obsidian** button to save data to Obsidian.
-- **Vault** dropdown to switch between saved vaults added in Web Clipper settings.
-- **Folder** field to define which folder to save to.
-- **Interpreter** to run [[Interpret web pages|natural language prompts]] on the page.
+Footer functionality includes the current primary delivery action, a menu for the other configured destinations, and Share when supported by the browser.
 

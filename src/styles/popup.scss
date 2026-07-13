@@ -27,7 +27,7 @@
 	height: max(var(--chromium-popup-height), 100vh);
 }
 
-#popup.is-embedded {
+#popup.is-reader-panel {
 	--popup-max-height: none;
 	--popup-width: auto;
 	--popup-width-expanded: auto;
@@ -104,6 +104,14 @@
 	max-height: 100%;
 	overflow: hidden;
 
+	#delivery-status {
+		margin: 0;
+		padding: 0.5rem var(--popup-padding);
+		color: var(--text-error);
+		font-size: var(--font-ui-smaller);
+		border-bottom: 1px solid var(--divider-color);
+	}
+
 	#note-name-field {
 		border: none;
 		border-radius: 0;
@@ -152,19 +160,6 @@
 		button {
 			font-weight: var(--clipper-button-font-weight);
 			font-size: var(--clipper-button-font-size);
-		}
-	}
-	.vault-path-container {
-		display: flex;
-		flex-direction: row;
-		gap: 0.625rem;
-		#vault-container {
-			flex-grow: 1;
-		}
-		#vault-select {
-			font-weight: var(--clipper-select-font-weight);
-			min-width: 100px;
-			cursor: default;
 		}
 	}
 }
@@ -299,7 +294,7 @@
 
 .has-error {
 	#highlighter-mode,
-	#embedded-mode,
+	#reader-panel-close,
 	#reader-mode,
 	#show-variables,
 	#template-select {

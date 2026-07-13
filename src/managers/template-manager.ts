@@ -13,6 +13,12 @@ const TEMPLATE_LIST_KEY = 'template_list';
 const CHUNK_SIZE = 8000;
 const SIZE_WARNING_THRESHOLD = 6000;
 
+function withoutRetiredContext(value: unknown): Template | null {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	const { context: _retiredContext, ...template } = value as Record<string, unknown>;
+	return template as unknown as Template;
+}
+
 export function setEditingTemplateIndex(index: number): void {
 	editingTemplateIndex = index;
 }
@@ -32,15 +38,15 @@ export async function loadTemplates(): Promise<Template[]> {
 					const compressedChunks = result[`template_${id}`] as string[];
 					if (compressedChunks) {
 						const decompressedData = decompressFromUTF16(compressedChunks.join(''));
-						const template = JSON.parse(decompressedData);
+						const template = withoutRetiredContext(JSON.parse(decompressedData));
 						if (template && Array.isArray(template.properties)) {
 							return template;
 						}
 					}
-					console.warn(`Template ${id} is invalid or missing`);
+					console.warn('A stored template is invalid or missing');
 					return null;
-				} catch (error) {
-					console.error(`Error parsing template ${id}:`, error);
+				} catch {
+					console.error('Error parsing a stored template');
 					return null;
 				}
 			}));
@@ -59,8 +65,8 @@ export async function loadTemplates(): Promise<Template[]> {
 		await updateGlobalPropertyTypes(templates);
 
 		return templates;
-	} catch (error) {
-		console.error('Error loading templates:', error);
+	} catch {
+		console.error('Error loading templates');
 		const defaultTemplate = createDefaultTemplate();
 		templates = [defaultTemplate];
 		await saveTemplateSettings();
@@ -91,13 +97,13 @@ export async function saveTemplateSettings(): Promise<string[]> {
 		console.log('Template settings saved');
 		return warnings;
 	} catch (error) {
-		console.error('Error saving templates:', error);
+		console.error('Error saving templates');
 		throw error;
 	}
 }
 
 async function prepareTemplateForSave(template: Template): Promise<[string[], string | null]> {
-	const compressedData = compressToUTF16(JSON.stringify(template));
+	const compressedData = compressToUTF16(JSON.stringify(withoutRetiredContext(template)));
 	const chunks = [];
 	for (let i = 0; i < compressedData.length; i += CHUNK_SIZE) {
 		chunks.push(compressedData.slice(i, i + CHUNK_SIZE));
@@ -118,7 +124,6 @@ export function createDefaultTemplate(): Template {
 		noteNameFormat: '{{title}}',
 		path: 'Clippings',
 		noteContentFormat: '{{content}}',
-		context: "",
 		properties: [
 			{ id: Date.now().toString() + Math.random().toString(36).slice(2, 11), name: 'title', value: '{{title}}' },
 			{ id: Date.now().toString() + Math.random().toString(36).slice(2, 11), name: 'source', value: '{{url}}' },
@@ -174,7 +179,7 @@ function getUniqueTemplateName(baseName: string): string {
 
 export async function deleteTemplate(templateId: string): Promise<boolean> {
 	const index = templates.findIndex(t => t.id === templateId);
-	console.log('Deleting template:', templateId);
+	console.log('Deleting template');
 	if (index !== -1) {
 		// Remove from the templates array
 		templates.splice(index, 1);
@@ -194,10 +199,10 @@ export async function deleteTemplate(templateId: string): Promise<boolean> {
 			// Update the template_list in storage
 			await browser.storage.sync.set({ 'template_list': templateIds });
 
-			console.log(`Template ${templateId} deleted successfully`);
+			console.log('Template deleted successfully');
 			return true;
-		} catch (error) {
-			console.log('Error deleting template:', error);
+		} catch {
+			console.log('Error deleting template');
 			return false;
 		}
 	}
@@ -248,7 +253,7 @@ export async function rebuildTemplateList(): Promise<void> {
 			.filter(key => key.startsWith('template_') && key !== 'template_list')
 			.map(key => key.replace('template_', ''));
 
-		console.log('Found template IDs:', templateIds);
+		console.log('Found stored template IDs');
 
 		// Update the template_list in storage
 		await browser.storage.sync.set({ 'template_list': templateIds });
@@ -258,9 +263,9 @@ export async function rebuildTemplateList(): Promise<void> {
 		// Reload templates
 		templates = await loadTemplates();
 
-		console.log('Templates reloaded:', templates);
-	} catch (error) {
-		console.error('Error rebuilding template list:', error);
+		console.log('Templates reloaded');
+	} catch {
+		console.error('Error rebuilding template list');
 	}
 }
 

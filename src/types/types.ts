@@ -1,3 +1,5 @@
+import type { DestinationKind } from '../destinations/types';
+
 export interface Template {
 	id: string;
 	name: string;
@@ -7,8 +9,6 @@ export interface Template {
 	noteContentFormat: string;
 	properties: Property[];
 	triggers?: string[];
-	vault?: string;
-	context?: string;
 }
 
 export interface Property {
@@ -24,25 +24,10 @@ export interface ExtractedContent {
 
 export type FilterFunction = (value: string, param?: string) => string | any[];
 
-export interface PromptVariable {
-	key: string;
-	prompt: string;
-	filters?: string;
-}
-
 export interface PropertyType {
 	name: string;
 	type: string;
 	defaultValue?: string;
-}
-
-export interface Provider {
-	id: string;
-	name: string;
-	baseUrl: string;
-	apiKey: string;
-	apiKeyRequired?: boolean;
-	presetId?: string;
 }
 
 export interface Rating {
@@ -50,7 +35,15 @@ export interface Rating {
 	date: string;
 }
 
-export type SaveBehavior = 'addToObsidian' | 'saveFile' | 'copyToClipboard';
+export type ClipAction = DestinationKind | 'share';
+
+export interface ClipStats {
+	clipboard: number;
+	download: number;
+	'custom-uri': number;
+	'local-http': number;
+	share: number;
+}
 
 export interface ReaderSettings {
 	fontSize: number;
@@ -71,49 +64,26 @@ export interface ReaderSettings {
 }
 
 export interface Settings {
-	vaults: string[];
 	showMoreActionsButton: boolean;
 	betaFeatures: boolean;
-	legacyMode: boolean;
-	silentOpen: boolean;
-	openBehavior: 'popup' | 'embedded' | 'reader';
+	openBehavior: 'popup' | 'reader';
 	highlighterEnabled: boolean;
 	alwaysShowHighlights: boolean;
 	highlightBehavior: string;
-	interpreterModel?: string;
-	models: ModelConfig[];
-	providers: Provider[];
-	interpreterEnabled: boolean;
-	interpreterAutoRun: boolean;
-	defaultPromptContext: string;
 	propertyTypes: PropertyType[];
 	readerSettings: ReaderSettings;
-	stats: {
-		addToObsidian: number;
-		saveFile: number;
-		copyToClipboard: number;
-		share: number;
-	};
-	history: HistoryEntry[];
+	stats: ClipStats;
 	ratings: Rating[];
-	saveBehavior: 'addToObsidian' | 'saveFile' | 'copyToClipboard';
-}
-
-export interface ModelConfig {
-	id: string;
-	providerId: string;
-	providerModelId: string;
-	name: string;
-	enabled: boolean;
+	defaultDestination: DestinationKind;
+	customUriTemplate: string;
+	localHttpEndpoint: string;
 }
 
 export interface HistoryEntry {
 	datetime: string;
 	url: string;
-	action: 'addToObsidian' | 'saveFile' | 'copyToClipboard' | 'share';
+	action: ClipAction;
 	title?: string;
-	vault?: string;
-	path?: string;
 }
 
 export interface ConversationMessage {

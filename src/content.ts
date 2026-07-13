@@ -5,17 +5,17 @@ import { loadSettings, generalSettings } from './utils/storage-utils';
 import { getDomain } from './utils/string-utils';
 import { extractContentBySelector as extractContentBySelectorShared } from './utils/shared';
 import Defuddle from 'defuddle';
-import { createMarkdownContent } from 'defuddle/full';
 import { flattenShadowDom } from './utils/flatten-shadow-dom';
 import { serializeChildren } from './utils/dom-utils';
-import { saveFile } from './utils/file-utils';
 import { debugLog } from './utils/debug';
-import { updateSidebarWidth, addResizeHandle, cleanupResizeHandlers } from './utils/iframe-resize';
-import { parseForClip } from './utils/clip-utils';
+import {
+	createDocumentDestinationRuntime,
+	dispatchDocumentDestinationMessage,
+} from './utils/document-destination-runtime';
 
 declare global {
 	interface Window {
-		obsidianClipperGeneration?: number;
+		openMarkdownClipperGeneration?: number;
 	}
 }
 
@@ -25,64 +25,16 @@ declare global {
 	// over their own generation value and bail out when they see a newer one,
 	// so a zombie content script (runtime invalidated after extension update)
 	// will silently yield to the freshly-injected instance.
-	window.obsidianClipperGeneration = (window.obsidianClipperGeneration ?? 0) + 1;
-	const myGeneration = window.obsidianClipperGeneration;
+	window.openMarkdownClipperGeneration = (window.openMarkdownClipperGeneration ?? 0) + 1;
+	const myGeneration = window.openMarkdownClipperGeneration;
 
 	debugLog('Clipper', 'Initializing content script, generation', myGeneration);
 
 	let isHighlighterMode = false;
-	const iframeId = 'obsidian-clipper-iframe';
-	const containerId = 'obsidian-clipper-container';
-
-	function removeContainer(container: HTMLElement) {
-		container.classList.add('is-closing');
-		updateSidebarWidth(document, null);
-		cleanupResizeHandlers(document);
-		container.addEventListener('animationend', () => {
-			container.remove();
-			highlighter.repositionHighlights();
-		}, { once: true });
-	}
-
-	async function toggleIframe() {
-		const existingContainer = document.getElementById(containerId);
-		if (existingContainer) {
-			removeContainer(existingContainer);
-			return;
-		}
-
-		await ensureHighlighterCSS();
-
-		const container = document.createElement('div');
-		container.id = containerId;
-		container.classList.add('is-open');
-
-		const { clipperIframeWidth, clipperIframeHeight } = await browser.storage.local.get(['clipperIframeWidth', 'clipperIframeHeight']);
-		if (clipperIframeWidth) {
-			container.style.width = `${clipperIframeWidth}px`;
-		}
-		if (clipperIframeHeight) {
-			container.style.height = `${clipperIframeHeight}px`;
-		}
-
-		const iframe = document.createElement('iframe');
-		iframe.id = iframeId;
-		iframe.allow = 'clipboard-write; web-share';
-		iframe.src = browser.runtime.getURL('side-panel.html?context=iframe');
-		container.appendChild(iframe);
-
-		const resizeCallbacks = {
-			onResize: () => highlighter.repositionHighlights(),
-			onResizeEnd: () => highlighter.repositionHighlights(),
-		};
-		addResizeHandle(document, container, 'w', resizeCallbacks);
-		addResizeHandle(document, container, 's', resizeCallbacks);
-		addResizeHandle(document, container, 'sw', resizeCallbacks);
-
-		document.body.appendChild(container);
-		updateSidebarWidth(document, container);
-		container.addEventListener('animationend', () => highlighter.repositionHighlights(), { once: true });
-	}
+	const documentDestinationRuntime = createDocumentDestinationRuntime({
+		document,
+		prepare: () => flattenShadowDom(document),
+	});
 
 	// Firefox
 	browser.runtime.sendMessage({ action: "contentScriptLoaded" });
@@ -111,88 +63,19 @@ declare global {
 	browser.runtime.onMessage.addListener((request: any, sender, sendResponse) => {
 		// If a newer generation of this content script has been injected,
 		// yield to it rather than responding from a potentially stale context.
-		if (window.obsidianClipperGeneration !== myGeneration) {
+		if (window.openMarkdownClipperGeneration !== myGeneration) {
 			return;
 		}
+
+		const destinationMessageHandled = dispatchDocumentDestinationMessage(
+			request,
+			destination => documentDestinationRuntime.deliver(destination),
+			sendResponse,
+		);
+		if (destinationMessageHandled) return true;
 
 		if (request.action === "ping") {
 			sendResponse({});
-			return true;
-		}
-
-		if (request.action === "toggle-iframe") {
-			toggleIframe().then(() => {
-				sendResponse({ success: true });
-			});
-			return true;
-		}
-
-		if (request.action === "close-iframe") {
-			const existingContainer = document.getElementById(containerId);
-			if (existingContainer) {
-				removeContainer(existingContainer);
-			}
-			return;
-		}
-
-		if (request.action === "copy-text-to-clipboard") {
-			const textArea = document.createElement("textarea");
-			textArea.value = request.text;
-			document.body.appendChild(textArea);
-			textArea.select();
-			try {
-				document.execCommand('copy');
-				sendResponse({success: true});
-			} catch (err) {
-				sendResponse({success: false});
-			}
-			document.body.removeChild(textArea);
-			return true;
-		}
-
-		if (request.action === "copyMarkdownToClipboard") {
-			flattenShadowDom(document).then(() => {
-				try {
-					const defuddled = parseForClip(document);
-
-					// Convert HTML content to markdown
-					const markdown = createMarkdownContent(defuddled.content, document.URL);
-
-					// Copy to clipboard
-					const textArea = document.createElement("textarea");
-					textArea.value = markdown;
-					document.body.appendChild(textArea);
-					textArea.select();
-					document.execCommand('copy');
-					document.body.removeChild(textArea);
-
-					sendResponse({ success: true });
-				} catch (err) {
-					console.error('Failed to copy markdown to clipboard:', err);
-					sendResponse({ success: false, error: (err as Error).message });
-				}
-			});
-			return true;
-		}
-
-		if (request.action === "saveMarkdownToFile") {
-			flattenShadowDom(document).then(async () => {
-				try {
-					const defuddled = parseForClip(document);
-					const markdown = createMarkdownContent(defuddled.content, document.URL);
-					const title = defuddled.title || document.title || 'Untitled';
-					const fileName = title.replace(/[/\\?%*:|"<>]/g, '-');
-					await saveFile({
-						content: markdown,
-						fileName,
-						mimeType: 'text/markdown',
-					});
-					sendResponse({ success: true });
-				} catch (err) {
-					console.error('Failed to save markdown file:', err);
-					sendResponse({ success: false, error: (err as Error).message });
-				}
-			});
 			return true;
 		}
 
@@ -255,8 +138,8 @@ declare global {
 							try {
 								const absoluteUrl = new URL(value, document.baseURI).href;
 								element.setAttribute(attr, absoluteUrl);
-							} catch (e) {
-								console.warn(`Failed to process ${attr} URL:`, value);
+							} catch {
+								console.warn('Failed to process a page URL attribute');
 							}
 						}
 					});
@@ -291,7 +174,7 @@ declare global {
 				highlighter.updatePageDomainSettings({ site: defuddled.site, favicon: defuddled.favicon });
 				sendResponse(response);
 			}).catch((error: unknown) => {
-				console.error('[Obsidian Clipper] getPageContent error:', error);
+				console.error('[Open Markdown Clipper] getPageContent failed');
 				sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
 			});
 			return true;
@@ -370,7 +253,7 @@ declare global {
 				if (elementToHighlight) {
 					highlighter.highlightElement(elementToHighlight);
 				} else {
-					console.warn('Could not find element to highlight. Info:', request.targetElementInfo);
+					console.warn('Could not find element to highlight');
 				}
 			}
 			updateHasHighlights();
@@ -384,13 +267,13 @@ declare global {
 				.then(response => {
 					sendResponse(response);
 				})
-				.catch(error => {
-					console.error("Error getting highlighter mode:", error);
+				.catch(() => {
+					console.error('Error getting highlighter mode');
 					sendResponse({ isActive: false });
 				});
 			return true;
 		} else if (request.action === "getReaderModeState") {
-			sendResponse({ isActive: document.documentElement.classList.contains('obsidian-reader-active') });
+			sendResponse({ isActive: document.documentElement.classList.contains('open-markdown-clipper-reader-active') });
 			return true;
 		}
 		return true;
@@ -439,12 +322,9 @@ declare global {
 	// Initialize highlighter
 	initializeHighlighter();
 
-	// Expose highlighter API on window so reader-script.js (a separate
-	// webpack bundle injected when reader mode activates) can delegate
-	// all state operations to this single module instance. Without this,
-	// both bundles own a copy of highlighter.ts with independent mutable
-	// state — the bridge ensures one source of truth per tab.
-	window.__obsidianHighlighter = {
+	// Compatibility bridge for integrations that load a second highlighter
+	// copy. Production Reader navigation stays on extension-origin reader.html.
+	window.__openMarkdownClipperHighlighter = {
 		toggleHighlighterMenu: highlighter.toggleHighlighterMenu,
 		handleTextSelection: highlighter.handleTextSelection,
 		highlightElement: highlighter.highlightElement,
@@ -478,7 +358,7 @@ declare global {
 	window.addEventListener('beforeunload', handlePageUnload);
 
 	// Listen for custom events from the reader script
-	document.addEventListener('obsidian-reader-init', async () => {
+	document.addEventListener('open-markdown-clipper-reader-init', async () => {
 		// Find the highlighter button
 		const button = document.querySelector('[data-action="toggle-highlighter"]');
 		if (button) {
@@ -500,8 +380,8 @@ declare global {
 							if (response && !response.error && response.tabId) {
 								tabId = response.tabId;
 							}
-						} catch (error) {
-							console.error('[Content] Failed to get tab ID from background script:', error);
+						} catch {
+							console.error('[Content] Failed to get tab ID from background script');
 						}
 					}
 
@@ -510,8 +390,8 @@ declare global {
 					} else {
 						console.error('[Content]','Could not determine tab ID');
 					}
-				} catch (error) {
-					console.error('[Content]','Error in toggle flow:', error);
+				} catch {
+					console.error('[Content]', 'Error in toggle flow');
 				}
 			});
 		}
