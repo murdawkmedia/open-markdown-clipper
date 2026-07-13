@@ -363,6 +363,51 @@ test('each legacy transport identifier is rejected in final mode', () => {
 	}
 });
 
+test('retired native-host placeholder is rejected in active source', () => {
+	const retiredHost = ['application', 'id'].join('.');
+	const findings = scanEntries(cleanEntries([{
+		path: 'src/background.ts',
+		content: `browser.runtime.${['send', 'NativeMessage'].join('')}('${retiredHost}', request);`,
+	}]), { mode: 'final' });
+
+	assert.ok(findings.some(({ path, rule }) => (
+		path === 'src/background.ts'
+		&& rule === 'retired-native-host-placeholder'
+	)));
+});
+
+test('the 0.1 release line rejects all unreviewed native messaging surfaces', () => {
+	const entries = cleanEntries([{
+		path: 'src/utils/native.ts',
+		content: `browser.runtime.${['send', 'NativeMessage'].join('')}('com.example.host', request);`,
+	}]);
+	for (const manifestPath of [
+		'src/manifest.chrome.json',
+		'src/manifest.firefox.json',
+	]) {
+		const entry = entries.find(({ path }) => path === manifestPath);
+		const manifest = JSON.parse(entry.content);
+		manifest.optional_permissions = ['nativeMessaging'];
+		entry.content = JSON.stringify(manifest);
+	}
+
+	const findings = scanEntries(entries, { mode: 'final' });
+
+	assert.ok(findings.some(({ path, rule }) => (
+		path === 'src/utils/native.ts'
+		&& rule === 'unreviewed-native-messaging'
+	)));
+	for (const manifestPath of [
+		'src/manifest.chrome.json',
+		'src/manifest.firefox.json',
+	]) {
+		assert.ok(findings.some(({ path, rule }) => (
+			path === manifestPath
+			&& rule === 'unreviewed-native-messaging-permission'
+		)));
+	}
+});
+
 test('formatted findings expose rules and paths but never matched content', () => {
 	const sensitiveValue = ['abcdefgh', 'ijklmnop', '1234'].join('');
 	const secret = `${['api', 'key'].join('_')}=${sensitiveValue}`;

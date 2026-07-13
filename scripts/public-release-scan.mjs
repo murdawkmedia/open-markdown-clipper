@@ -39,6 +39,9 @@ const RETIRED_MODEL_CLEANUP_PATHS = new Set([
 const RETIRED_MODEL_DEV_CREDENTIAL_PATHS = new Set([
 	'src/utils/i18n-automation.ts',
 ]);
+const RETIRED_NATIVE_HOST_PLACEHOLDER = ['application', 'id'].join('.');
+const UNREVIEWED_NATIVE_MESSAGE_CALL = ['send', 'NativeMessage'].join('');
+const NATIVE_MESSAGING_PERMISSION = ['native', 'Messaging'].join('');
 const RETIRED_MODEL_API_KEY_PATTERN = new RegExp(['\\bapi', 'Key\\b'].join(''), 'u');
 const RETIRED_MODEL_PATHS = new Set([
 	'providers.json',
@@ -228,7 +231,7 @@ function parseJson(entriesByPath, path, findings, rule) {
 	}
 }
 
-function scanRequiredIdentity(entriesByPath, findings) {
+function scanRequiredIdentity(entriesByPath, findings, mode) {
 	if (!entriesByPath.has('NOTICE.md')) {
 		findings.push(finding('NOTICE.md', 'missing-notice'));
 	}
@@ -307,6 +310,23 @@ function scanRequiredIdentity(entriesByPath, findings) {
 	) {
 		findings.push(finding('src/manifest.firefox.json', 'invalid-firefox-identity'));
 	}
+
+	if (mode === 'final') {
+		for (const [path, manifest] of [
+			['src/manifest.chrome.json', chrome],
+			['src/manifest.firefox.json', firefox],
+		]) {
+			if (
+				manifest
+				&& ['permissions', 'optional_permissions'].some((key) => (
+					Array.isArray(manifest[key])
+					&& manifest[key].includes(NATIVE_MESSAGING_PERMISSION)
+				))
+			) {
+				findings.push(finding(path, 'unreviewed-native-messaging-permission'));
+			}
+		}
+	}
 }
 
 export function scanEntries(entries, { mode }) {
@@ -332,6 +352,22 @@ export function scanEntries(entries, { mode }) {
 			|| EXCLUDED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))
 		) {
 			findings.push(finding(path, 'excluded-upstream-asset'));
+		}
+		if (
+			mode === 'final'
+			&& typeof content === 'string'
+			&& !isHistoricalPlanPath(path)
+			&& content.includes(RETIRED_NATIVE_HOST_PLACEHOLDER)
+		) {
+			findings.push(finding(path, 'retired-native-host-placeholder'));
+		}
+		if (
+			mode === 'final'
+			&& typeof content === 'string'
+			&& !isHistoricalPlanPath(path)
+			&& content.includes(UNREVIEWED_NATIVE_MESSAGE_CALL)
+		) {
+			findings.push(finding(path, 'unreviewed-native-messaging'));
 		}
 		if (
 			mode === 'final'
@@ -391,7 +427,7 @@ export function scanEntries(entries, { mode }) {
 		}
 	}
 
-	scanRequiredIdentity(entriesByPath, findings);
+	scanRequiredIdentity(entriesByPath, findings, mode);
 	return findings.sort((left, right) => (
 		left.path.localeCompare(right.path) || left.rule.localeCompare(right.rule)
 	));

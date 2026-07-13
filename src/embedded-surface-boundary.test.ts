@@ -121,4 +121,23 @@ describe('hostile-page extension UI boundary', () => {
 		expect(source('background.ts')).not.toContain("typedRequest.action === 'copy-to-clipboard'");
 		expect(source('content.ts')).not.toContain('request.action === "copy-text-to-clipboard"');
 	});
+
+	it('keeps retired native-host fallbacks inert until a reviewed destination exists', () => {
+		const background = source('background.ts');
+		for (const retired of [
+			'nativeFetch',
+			['send', 'NativeMessage'].join(''),
+			['application', 'id'].join('.'),
+		]) {
+			expect(background).not.toContain(retired);
+		}
+		for (const manifestPath of ['manifest.chrome.json', 'manifest.firefox.json']) {
+			const manifest = JSON.parse(source(manifestPath)) as {
+				permissions?: string[];
+				optional_permissions?: string[];
+			};
+			expect(manifest.permissions ?? []).not.toContain('nativeMessaging');
+			expect(manifest.optional_permissions ?? []).not.toContain('nativeMessaging');
+		}
+	});
 });
